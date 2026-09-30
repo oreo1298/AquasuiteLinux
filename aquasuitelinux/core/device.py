@@ -101,6 +101,11 @@ class HidDevice(BaseDevice):
         self._status_time = 0.0
         self._ctrl: bytes | None = None
         self._ctrl_time = 0.0
+        # How software sensor / Leakshield data reaches the device: a usbfs bulk channel (real
+        # hardware), the transport's own output reports ("hid": the simulator, or a HID interface with
+        # an interrupt OUT endpoint), or nothing.
+        self.feed_mode = "hid"
+        self.bulk = None
         self._open()
 
     def _open(self) -> None:
@@ -138,13 +143,13 @@ class HidDevice(BaseDevice):
             caps.add("device_curves")
         if s.follow:
             caps.add("follow")
-        if s.soft_sensors:
+        if s.soft_sensors and self.feed_mode != "none":
             caps.add("soft_sensors")
         if s.temp_offsets is not None and s.family == "standard":
             caps.add("temp_offsets")
         if s.flow_pulses is not None:
             caps.add("flow_pulses")
-        if s.leakshield_feed:
+        if s.leakshield_feed and self.feed_mode != "none":
             caps.add("leakshield_feed")
         return caps
 
@@ -227,23 +232,38 @@ class HidDevice(BaseDevice):
                     raise NotSupported(f"{s.name} outputs cannot be controlled")
             self.write_control(bytes(buf))
 
+    def feed_description(self) -> str:
+        if self.bulk is not None:
+            return self.bulk.describe()
+        return {"hid": "HID output report", "none": "no way to send data found"}.get(self.feed_mode, self.feed_mode)
+
+    def _send_feed(self, data: bytes) -> None:
+        if self.bulk is not None:
+            self.bulk.write(data)
+        elif self.feed_mode == "hid":
+            self.transport.write_output(data)
+        else:
+            raise NotSupported(f"{self.spec.name}: no USB endpoint found for software sensor data")
+
     def push_soft_sensors(self, values: list[tuple[float, int] | None]) -> None:
         if not self.spec.soft_sensors:
             raise NotSupported(f"{self.spec.name} has no software sensors")
         with self.lock:
-            self.transport.write_output(control.soft_sensor_report(self.spec.soft_sensors, values))
+            self._send_feed(control.soft_sensor_report(self.spec.soft_sensors, values))
 
     def push_leakshield(self, pump_rpm: float | None, flow: float | None) -> None:
         if not self.spec.leakshield_feed:
             raise NotSupported(f"{self.spec.name} is not a Leakshield")
         with self.lock:
-            self.transport.write_output(control.leakshield_feed_report(pump_rpm, flow))
+            self._send_feed(control.leakshield_feed_report(pump_rpm, flow))
 
     def close(self) -> None:
-        try:
-            self.transport.close()
-        except Exception:  # noqa: BLE001 - closing a vanished device
-            pass
+        for part in (self.bulk, self.transport):
+            try:
+                if part is not None:
+                    part.close()
+            except Exception:  # noqa: BLE001 - closing a vanished device
+                pass
 
 
 # ---------------------------------------------------------------------- hwmon fallback

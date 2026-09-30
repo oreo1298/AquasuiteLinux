@@ -168,6 +168,8 @@ class OutputTile(QFrame):
         set_placement_badge(self.badge, o["placement"], o.get("override"))
         if o["placement"] == "unmanaged":
             self.ctrl.setText("Device keeps its own settings")
+        elif o["placement"] == "pending":
+            self.ctrl.setText(f"{o.get('controller_name') or ''} · checking the device…")
         else:
             self.ctrl.setText(o.get("controller_name") or "")
         tip = o.get("reason") or ""
@@ -211,7 +213,7 @@ class OverviewPage(QWidget):
         self.devices_card = Card("Devices", "chip")
         self.devices_card.setMinimumWidth(220)
         self.devices_card.setMaximumWidth(360)
-        rescan = flat_button("refresh", "Look for devices again")
+        rescan = flat_button("refresh", "Look for devices again (also retries sending software sensor data)")
         rescan.clicked.connect(lambda: bridge.call("rescan", success="Looking for devices…"))
         self.devices_card.add_header_widget(rescan)
         self.device_list = QListWidget()

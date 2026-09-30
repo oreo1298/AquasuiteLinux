@@ -304,7 +304,14 @@ aquactl --demo status                          # try it with the simulated devic
   through the kernel driver (the device shows *kernel driver* and an orange dot) but can't configure it.
   The background service runs as root and doesn't need the rule.
 - **A fan says "Runs in software because …"**: the reason is shown on the Fans page, e.g. the controller
-  type only runs in software, or the device didn't echo the software sensor values back.
+  type only runs in software, or the device didn't accept or echo the software sensor values.
+- **"could not send software sensor values"**: the Delta T (or other value from elsewhere) goes to the
+  device's vendor USB interface through `/dev/bus/usb`. Update to the current udev rule (reinstall the
+  package or rerun `packaging/install.sh`) and re-plug the device, or use the background service. Until
+  then those curves run in software. `aquactl probe` shows the USB layout and the path in use; after
+  fixing it, click *Look for devices again* on the Overview to retry.
+- **A fan shows STARTING**: its curve reads a value from elsewhere, and AquasuiteLinux is checking the
+  device receives it before storing the curve (a few seconds; the device keeps its settings meanwhile).
 - **Fans go to full speed when I quit**: that's the fallback power of software-controlled outputs. Enable
   the background service, or set *When control stops* to *Leave them as they are* in Settings.
 - **Changing settings in the app says "Not allowed"** (service mode): changing the service's settings

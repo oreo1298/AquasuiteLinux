@@ -1,5 +1,10 @@
 # Aquacomputer devices (USB vendor 0c70): QUADRO, OCTO, D5 NEXT, aquaero, farbwerk, high flow,
 # LEAKSHIELD, aquastream, poweradjust (installed by AquasuiteLinux).
-# "uaccess" gives the user logged in at the local seat access to the hidraw nodes, so the app can
-# run without root. Members of the "aquasuite" group get access too (useful over SSH).
+# "uaccess" gives the user logged in at the local seat access, so the app can run without root.
+# Members of the "aquasuite" group get access too (useful over SSH).
+#
+# hidraw nodes: sensor readings and device settings.
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0c70", MODE="0660", GROUP="aquasuite", TAG+="uaccess"
+# The USB device node: software sensor values (e.g. a Delta T) go to the device's vendor-specific
+# interface over a bulk endpoint, like aquasuite sends them.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0c70", MODE="0660", GROUP="aquasuite", TAG+="uaccess"

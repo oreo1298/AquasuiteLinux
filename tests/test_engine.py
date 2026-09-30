@@ -258,3 +258,81 @@ def test_pump_is_never_stopped_by_a_controller():
         assert o["target"] == 30
     finally:
         eng.stop()
+
+
+def _delta_t_curve_config(**output):
+    cfg = Config()
+    cfg.virtual_sensors = [VirtualSensorConfig(id="dt", kind="difference",
+                                               inputs=[f"{QUADRO}/temp1", f"{QUADRO}/temp2"])]
+    cfg.controllers = [ControllerConfig(id="c", kind="curve", input="virtual/dt", points=[[2, 20], [10, 100]])]
+    cfg.outputs[f"{QUADRO}/fan1"] = OutputConfig(controller="c", **output)
+    return cfg
+
+
+def test_feed_send_failure_stops_at_once_and_moves_to_software():
+    """What a real QUADRO did: the software sensor report can't be sent (EPROTO / ETIMEDOUT)."""
+    from aquasuitelinux.core.errors import DeviceError
+    eng, _world, devs = sim_engine(_delta_t_curve_config())
+    q = sim(devs[0])
+    attempts = []
+
+    def fail(data):
+        attempts.append(data)
+        raise DeviceError("/dev/hidraw8: writing report 0x04 failed: Protocol error")
+    devs[0].transport.write_output = fail
+    try:
+        snap = run_ticks(eng, 8)
+        assert len(attempts) == 1                                   # no retry storm
+        o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]
+        assert o["placement"] == "software" and "not accepting" in o["reason"]
+        rep = control.ControlReport(devs[0].spec, q.ctrl)
+        assert rep.fan(0).mode == control.MODE_MANUAL               # never stored a curve it can't feed
+        warnings = [e[2] for e in snap["events"] if "could not send software sensor values" in e[2]]
+        assert len(warnings) == 1
+        assert {d["key"]: d for d in snap["devices"]}[QUADRO]["feed"] == "broken"
+        # "Look for devices again" gives it another chance
+        devs[0].transport.write_output = lambda data: None          # accepts silently from now on
+        eng.rescan()
+        assert QUADRO not in eng.feed_broken
+    finally:
+        eng.stop()
+
+
+def test_pending_output_is_not_written_until_the_feed_is_confirmed():
+    eng, _world, devs = sim_engine(_delta_t_curve_config())
+    q = sim(devs[0])
+    try:
+        snap = eng.tick()
+        o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]
+        assert o["placement"] == "pending" and q.settings_writes == 0
+        snap = run_ticks(eng, 6)
+        o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]
+        assert o["placement"] == "device"
+        assert q.settings_writes == 1                                # only the curve, once
+    finally:
+        eng.stop()
+
+
+def test_pending_gives_up_after_deadline(monkeypatch):
+    import aquasuitelinux.core.engine as engine_mod
+    monkeypatch.setattr(engine_mod, "PENDING_SECONDS", 1.0)
+    cfg = _delta_t_curve_config()
+    cfg.virtual_sensors[0].inputs = [f"{QUADRO}/temp4", f"{QUADRO}/temp2"]   # temp4 isn't connected: no value
+    eng, _world, _devs = sim_engine(cfg)
+    try:
+        snap = run_ticks(eng, 8)
+        o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]
+        assert o["placement"] == "software" and o["target"] == 100      # input missing -> fallback power
+    finally:
+        eng.stop()
+
+
+def test_devices_without_a_feed_path_use_software():
+    eng, _world, devs = sim_engine(_delta_t_curve_config())
+    devs[0].feed_mode = "none"
+    try:
+        snap = run_ticks(eng, 3)
+        o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]
+        assert o["placement"] == "software" and "no software sensors" in o["reason"]
+    finally:
+        eng.stop()

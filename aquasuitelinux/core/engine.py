@@ -43,6 +43,7 @@ log = logging.getLogger(__name__)
 
 RESCAN_SECONDS = 10.0
 FEED_VERIFY_SECONDS = 6.0
+PENDING_SECONDS = 15.0      # an output waits at most this long for its device to confirm a software sensor feed
 MIN_CHANGE = 1.0            # % — smaller software power changes are not written
 MAX_REWRITES = 3            # the same settings are written at most this often if the device doesn't keep them
 CURVE_TOLERANCE = 20.0      # % — reported output may differ this much from the expected one
@@ -186,7 +187,9 @@ class Engine:
         self.feed_first_push: dict[str, float] = {}
         self.feed_ok: dict[str, bool] = {}
         self.feed_broken: set[str] = set()
+        self.leakshield_broken: set[str] = set()
         self.fed_devices: set[str] = set()
+        self.pending_since: dict[str, float] = {}                # device -> outputs waiting for feed confirmation
         self.last_write: dict[str, float] = {}
         self.write_failures: dict[str, int] = {}
         self.rewrites: dict[str, tuple[str, int]] = {}           # device -> (desired settings, times written)
@@ -301,7 +304,13 @@ class Engine:
 
     # ------------------------------------------------------------------ devices
     def rescan(self) -> None:
-        self._last_scan = 0.0
+        """Look for devices again, and give devices that refused software sensor data another chance."""
+        with self.lock:
+            self._last_scan = 0.0
+            if self.feed_broken or self.leakshield_broken:
+                self.feed_broken.clear()
+                self.leakshield_broken.clear()
+                self._plan_dirty = True
 
     def _scan(self, now: float) -> None:
         if now - self._last_scan < RESCAN_SECONDS:
@@ -482,6 +491,9 @@ class Engine:
                     ok, why = self._device_placement(plan, ctrl, dev, slots)
                     if ok:
                         plan.placement = "device"
+                    elif why.startswith("waiting"):
+                        # nothing is written while we wait: the device keeps what it has stored
+                        plan.placement, plan.reason = "pending", why
                     else:
                         plan.reason = why
             plans[oid] = plan
@@ -494,6 +506,15 @@ class Engine:
                 if target is None or target.placement != "device" or target.follow_index is not None:
                     plan.placement, plan.follow_index = "software", None
                     plan.reason = "the followed output is not controlled by the device"
+        now = time.monotonic()
+        for oid, plan in plans.items():
+            old = self.plans.get(oid)
+            if old is not None and old.placement != plan.placement and oid in self.runtime:
+                # a new placement starts from a clean slate so its first write isn't held back
+                self.runtime[oid].placement_written = ""
+                self.runtime[oid].last_written = None
+        pending = {p.device_key for p in plans.values() if p.placement == "pending"}
+        self.pending_since = {k: self.pending_since.get(k, now) for k in pending}
         self.plans = plans
         self.feed_slots = slots
         for oid in list(self.runtime):
@@ -543,6 +564,9 @@ class Engine:
             dev_slots[slot] = ctrl.input
         plan.slot = slot
         plan.source_index = len(spec.temps) + slot - 1
+        if not self.feed_ok.get(plan.device_key):
+            # the slot is fed from now on; the curve moves onto the device once it reports the values back
+            return False, f"waiting for the {spec.name} to confirm it receives the input"
         return True, ""
 
     # ------------------------------------------------------------------ controllers
@@ -566,6 +590,11 @@ class Engine:
             oc = cfg.outputs.get(oid) or OutputConfig()
             if plan.placement == "unmanaged":
                 rt.target = None
+                continue
+            if plan.placement == "pending":
+                # show what the curve asks for; the device isn't touched until the feed is confirmed
+                rt.target = round(controllers.scale_power(ctrl_values.get(plan.controller_id), oc.min_power,
+                                                          oc.max_power, oc.hold_min, oc.fallback), 1)
                 continue
             if self.devices[plan.device_key].spec.fans[plan.index].pump and not oc.hold_min:
                 oc = OutputConfig(**{**oc.__dict__, "hold_min": True})   # a controller never stops a pump
@@ -716,11 +745,23 @@ class Engine:
         return f.label if f else oid
 
     # ------------------------------------------------------------------ software sensors
+    def _feed_failed(self, key: str, dev: BaseDevice, exc: Exception) -> None:
+        """A device that can't take software sensor data: stop sending (each failure can block for seconds)."""
+        self.feed_broken.add(key)
+        self.fed_devices.discard(key)
+        self.feed_first_push.pop(key, None)
+        self.feed_pushed.pop(key, None)
+        self.feed_ok.pop(key, None)
+        self._plan_dirty = True
+        self.event("warning", f"{dev.spec.name}: could not send software sensor values ({exc}). Curves that use "
+                              "a Delta T or another sensor from elsewhere are now controlled in software. "
+                              "Use “Look for devices again” to retry.")
+
     def _push_feeds(self, now: float) -> None:
         for key, dev in self.devices.items():
             slots = self.feed_slots.get(key) or {}
             spec = dev.spec.soft_sensors
-            if spec is None or not dev.capabilities() & {"soft_sensors"}:
+            if spec is None or key in self.feed_broken or not dev.capabilities() & {"soft_sensors"}:
                 continue
             if not slots and key not in self.fed_devices:
                 continue
@@ -734,7 +775,7 @@ class Engine:
             try:
                 dev.push_soft_sensors(values)
             except AquaError as exc:
-                self._write_failed(key, exc)
+                self._feed_failed(key, dev, exc)
                 continue
             if slots:
                 self.fed_devices.add(key)
@@ -746,6 +787,11 @@ class Engine:
 
     def _verify_feeds(self, now: float) -> None:
         """Check the device reports back the values we sent; otherwise stop relying on them."""
+        for key, since in list(self.pending_since.items()):
+            if not self.feed_ok.get(key) and key not in self.feed_broken and now - since > PENDING_SECONDS:
+                dev = self.devices.get(key)
+                if dev is not None:
+                    self._feed_failed(key, dev, f"no confirmation within {PENDING_SECONDS:.0f} s")
         for key in list(self.fed_devices):
             first = self.feed_first_push.get(key)
             pushed = self.feed_pushed.get(key) or {}
@@ -760,6 +806,7 @@ class Engine:
             if ok:
                 if not self.feed_ok.get(key):
                     self.feed_ok[key] = True
+                    self._plan_dirty = True        # curves waiting for this feed can now run on the device
                 continue
             if not self.feed_ok.get(key) and now - first > FEED_VERIFY_SECONDS and key not in self.feed_broken:
                 self.feed_broken.add(key)
@@ -795,14 +842,16 @@ class Engine:
     def _push_leakshield(self) -> None:
         for ls in self.config.leakshield:
             dev = self.devices.get(ls.device)
-            if dev is None or not dev.spec.leakshield_feed:
+            if dev is None or not dev.spec.leakshield_feed or ls.device in self.leakshield_broken:
                 continue
             pump = self.readings.get(ls.pump)
             flow = self.readings.get(ls.flow)
             try:
                 dev.push_leakshield(pump.value if pump else None, flow.value if flow else None)
             except AquaError as exc:
-                self._write_failed(ls.device, exc)
+                self.leakshield_broken.add(ls.device)
+                self.event("warning", f"{dev.spec.name}: could not send pump speed and flow ({exc}); stopped "
+                                      "sending. Use “Look for devices again” to retry.")
 
     # ------------------------------------------------------------------ history / log
     def _record(self, now: float) -> None:
@@ -858,6 +907,7 @@ class Engine:
             info["writes"] = dev.writes
             info["feed"] = ("broken" if key in self.feed_broken else "ok" if self.feed_ok.get(key)
                             else "pending" if key in self.fed_devices else "")
+            info["feed_path"] = dev.feed_description() if hasattr(dev, "feed_description") else ""
             devices.append(info)
         outputs = []
         for key, dev in self.devices.items():

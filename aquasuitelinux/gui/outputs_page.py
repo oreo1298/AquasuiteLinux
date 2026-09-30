@@ -44,6 +44,9 @@ PLACEMENT_HELP = {
                 "changes by at least 1 % and at most every couple of seconds.",
     "unmanaged": "Not managed: the device keeps whatever it is set to (for example the settings aquasuite "
                  "stored on it).",
+    "pending": "Checking that the device receives this curve's input before storing the curve on it. Until then "
+               "the device keeps its current settings; if it doesn't confirm within 15 seconds, the curve runs in "
+               "software.",
 }
 
 

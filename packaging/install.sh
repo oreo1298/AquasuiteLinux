@@ -101,6 +101,7 @@ if [ "$UDEV" = 1 ]; then
     $SUDO install -Dm644 "$HERE/packaging/udev/70-aquasuitelinux.rules" /etc/udev/rules.d/70-aquasuitelinux.rules
     $SUDO udevadm control --reload-rules 2>/dev/null || true
     $SUDO udevadm trigger --subsystem-match=hidraw 2>/dev/null || true
+    $SUDO udevadm trigger --subsystem-match=usb --attr-match=idVendor=0c70 2>/dev/null || true
   fi
 fi
 

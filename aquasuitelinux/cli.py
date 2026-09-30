@@ -363,7 +363,7 @@ def cmd_monitor(s: Session, args) -> int:
 
 def cmd_probe(_s, args) -> int:
     """List Aquacomputer HID interfaces and their reports (for bug reports about new devices)."""
-    from .core.transport import HidrawTransport, enumerate_nodes
+    from .core.transport import HidrawTransport, enumerate_nodes, feed_channel, usb_layout
     nodes = enumerate_nodes(VENDOR_ID)
     if not nodes:
         print("No Aquacomputer hidraw nodes found.")
@@ -372,6 +372,13 @@ def cmd_probe(_s, args) -> int:
         print(f"{n.path}  {n.vendor:04x}:{n.product:04x}  {n.name!r}  interface {n.interface}")
         for r in n.reports:
             print(f"    report {r.report_id:#04x} {r.kind:<7} {r.length} bytes")
+        usb_dir, hid_if, endpoints = usb_layout(n.path)
+        if usb_dir is not None:
+            print(f"    USB device {usb_dir.name} (HID interface {hid_if})")
+            for e in endpoints:
+                print(f"      interface {e.interface}: endpoint {e.address:#04x} {e.kind} {e.direction}")
+        mode, channel = feed_channel(n.path)
+        print(f"    software sensor data: {channel.describe() if channel else mode}")
         if args.dump:
             try:
                 t = HidrawTransport(n.path)

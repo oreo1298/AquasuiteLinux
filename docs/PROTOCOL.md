@@ -7,16 +7,22 @@ first byte of the report, which is the report ID.
 
 ## Transport
 
-Every device is a USB HID device (vendor `0c70`). AquasuiteLinux uses the Linux **hidraw** interface:
+The QUADRO has two USB interfaces: interface 0 is vendor-specific with bulk endpoints 0x81 (IN) and
+0x02 (OUT); interface 1 is the HID interface with one interrupt IN endpoint (0x83). AquasuiteLinux uses
+the Linux **hidraw** interface for everything HID and **usbfs** for the bulk endpoint:
 
-| Operation | hidraw call |
+| Operation | call |
 |---|---|
-| status reports the device sends by itself | `read()` |
-| read the settings report | `ioctl(HIDIOCGFEATURE)` |
-| write the settings report | `ioctl(HIDIOCSFEATURE)` |
-| software sensor / LEAKSHIELD feed | `write()` (output report) |
+| status reports the device sends by itself | hidraw `read()` |
+| read the settings report | hidraw `ioctl(HIDIOCGFEATURE)` |
+| write the settings report | hidraw `ioctl(HIDIOCSFEATURE)` |
+| software sensor / LEAKSHIELD feed | usbfs `USBDEVFS_BULK` to endpoint 0x02 (interface 0 claimed) |
 
-The kernel driver and hidraw work side by side. The devices need about 200 ms between settings
+The HID interface has no OUT endpoint, so a hidraw `write()` of the software sensor report becomes a
+SET_REPORT control request, which the QUADRO rejects (EPROTO / ETIMEDOUT) — tested on real hardware.
+No kernel driver uses interface 0, so claiming it doesn't disturb hidraw or the hwmon driver. The
+endpoint is found through sysfs (`aquactl probe` prints the layout). The kernel driver and hidraw work
+side by side. The devices need about 200 ms between settings
 operations; AquasuiteLinux paces them like the kernel driver does. The aquaero and the LEAKSHIELD expose
 several HID interfaces under one product ID; the right one is chosen from the report descriptors.
 
@@ -107,8 +113,10 @@ on the device). 67 bytes:
 | 0x31 | 16 × `0x64` |
 | 0x41 | CRC-16/USB over bytes 1 … 0x40 |
 
-AquasuiteLinux builds byte-for-byte the report captured from aquasuite, sends it every second, and checks
-that the device reports the values back in its status report before relying on it.
+AquasuiteLinux builds byte-for-byte the report captured from aquasuite and sends it every second as a
+bulk transfer to endpoint 0x02. Before storing a curve that reads a software sensor on the device, it
+checks that the device reports the values back in its status report; if the transfer fails or the values
+don't come back, those outputs are controlled in software instead.
 
 ## LEAKSHIELD feed (output report, ID 0x04, 51 bytes)
 

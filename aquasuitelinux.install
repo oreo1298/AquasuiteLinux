@@ -1,6 +1,7 @@
 post_install() {
   udevadm control --reload-rules 2>/dev/null || true
   udevadm trigger --subsystem-match=hidraw 2>/dev/null || true
+  udevadm trigger --subsystem-match=usb --attr-match=idVendor=0c70 2>/dev/null || true
   systemctl daemon-reload 2>/dev/null || true
   echo ":: AquasuiteLinux installed. Start it from your application menu, or run: aquasuitelinux"
   echo ":: To keep fan control running at boot and without the window:"
@@ -11,6 +12,8 @@ post_install() {
 
 post_upgrade() {
   udevadm control --reload-rules 2>/dev/null || true
+  udevadm trigger --subsystem-match=hidraw 2>/dev/null || true
+  udevadm trigger --subsystem-match=usb --attr-match=idVendor=0c70 2>/dev/null || true
   systemctl daemon-reload 2>/dev/null || true
   if systemctl is-active --quiet aquasuited.service 2>/dev/null; then
     systemctl try-restart aquasuited.service 2>/dev/null || true

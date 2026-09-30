@@ -494,7 +494,7 @@ class ValueTile(QFrame):
 
 
 PLACEMENT_TEXT = {"device": ("ON DEVICE", "BadgeDevice"), "software": ("SOFTWARE", "BadgeSoftware"),
-                  "unmanaged": ("NOT MANAGED", "BadgeIdle")}
+                  "pending": ("STARTING", "Badge"), "unmanaged": ("NOT MANAGED", "BadgeIdle")}
 
 
 def badge(text: str = "", kind: str = "BadgeIdle") -> QLabel:

@@ -29,8 +29,13 @@ Arch Linux (the user runs a QUADRO).
 - Flash wear: device placement writes settings only when the desired curve/limits differ from what's
   stored (`Engine._ensure_device_settings` compares checksums). Software placement writes only on
   ≥ 1 % change and at most every `write_interval` s. Keep both properties.
-- Software sensor feeds are verified by read-back (`Engine._verify_feeds`); a device that doesn't echo
-  gets `feed_broken` and its outputs move to software. Octo / farbwerk 360 layouts are unverified.
+- Software sensor (and Leakshield) data goes over usbfs bulk to endpoint 0x02 on the vendor interface
+  (`transport.UsbBulkChannel`, found by `feed_channel`). hidraw `write()` does NOT work on a real QUADRO:
+  its HID interface has no OUT endpoint, so it becomes SET_REPORT and fails with EPROTO/ETIMEDOUT after
+  blocking up to 5 s. A failed send marks the device `feed_broken` at once (no retries; rescan clears it).
+- Curves that need a feed start as placement "pending": nothing is written until the device echoes the
+  values (`feed_ok`), then they move onto the device; no confirmation within `PENDING_SECONDS` → software.
+  Octo / farbwerk 360 layouts are unverified.
 - Software placement neutralises the device's min/max (0 / 100 %) because scaling is done in software;
   device placement writes the output's min/max/fallback/flags.
 - Unmanaged outputs (no controller) must never be written.

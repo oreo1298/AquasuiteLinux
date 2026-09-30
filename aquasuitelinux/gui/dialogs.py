@@ -419,6 +419,9 @@ class DeviceDialog(QDialog):
         grid.add_row("Connection", backend.get(info.get("backend"), info.get("backend", "—")))
         grid.add_row("Power cycles", str(info.get("power_cycles") if info.get("power_cycles") is not None else "—"))
         grid.add_row("Settings writes", f"{info.get('writes', 0)} this session")
+        if info.get("feed_path"):
+            state = {"ok": "working", "broken": "not working", "pending": "checking…"}.get(info.get("feed", ""), "")
+            grid.add_row("Software sensor data", info["feed_path"] + (f" — {state}" if state else ""))
         lay.addWidget(grid)
         if info.get("notes"):
             lay.addWidget(_muted(info["notes"]))

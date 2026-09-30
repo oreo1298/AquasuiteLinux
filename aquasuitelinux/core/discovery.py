@@ -10,7 +10,7 @@ from .device import HidDevice, HwmonDevice, hwmon_devices
 from .devices import BY_PRODUCT, VENDOR_ID, DeviceSpec, status_span
 from .engine import DeviceProvider
 from .errors import DeviceError, PermissionDenied
-from .transport import SYSFS_HIDRAW, HidNode, HidrawTransport, enumerate_nodes
+from .transport import SYSFS_HIDRAW, HidNode, HidrawTransport, enumerate_nodes, feed_channel
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +93,9 @@ class HardwareProvider(DeviceProvider):
                         problems.append(str(exc))
                     continue
                 dev.hid_id = hid_id
+                if spec.soft_sensors or spec.leakshield_feed:
+                    dev.feed_mode, dev.bulk = feed_channel(node.path, self.hidraw_root)
+                    log.info("%s: software sensor data via %s", dev.key, dev.feed_description())
                 open_hid.add(hid_id)
                 found.append(dev)
                 break
