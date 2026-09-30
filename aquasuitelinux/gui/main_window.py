@@ -237,8 +237,6 @@ class MainWindow(QMainWindow):
         DeviceDialog(self.bridge, key, self, on_import=self.open_import).exec()
 
     def open_import(self, key: str | None) -> None:
-        if not self.bridge.snap.get("devices") and key is None:
-            pass
         ImportDialog(self.bridge, self, key).exec()
 
     def open_pins(self) -> None:

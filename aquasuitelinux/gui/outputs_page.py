@@ -339,7 +339,12 @@ class OutputsPage(QWidget):
         self.min_power.set_value(oc.min_power)
         self.max_power.set_value(oc.max_power)
         self.fallback.set_value(oc.fallback)
-        self.hold_min.setChecked(oc.hold_min)
+        pump = bool(o.get("pump"))
+        self.hold_min.setChecked(oc.hold_min or pump)
+        self.hold_min.setEnabled(not pump)
+        self.hold_min.setToolTip("Always on for pumps: a controller never stops a pump." if pump else
+                                 "When the controller asks for 0 %, keep the fan at its minimum power instead of "
+                                 "stopping it.")
         self.start_boost.setChecked(oc.start_boost)
         self.ramp_up.setValue(oc.ramp_up)
         self.ramp_down.setValue(oc.ramp_down)

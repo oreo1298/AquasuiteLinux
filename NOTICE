@@ -1,0 +1,34 @@
+AquasuiteLinux
+==============
+
+AquasuiteLinux is an independent project. It is not affiliated with, endorsed by or sponsored by
+Aqua Computer GmbH & Co. KG. "aquasuite", "aquaero", "QUADRO", "OCTO", "D5 NEXT", "farbwerk",
+"high flow", "LEAKSHIELD", "aquastream" and "poweradjust" are trademarks of their owner and are
+used only to describe compatibility.
+
+Third-party references
+----------------------
+
+* The Linux aquacomputer_d5next hwmon driver, GPL-2.0-or-later, by Aleksa Savic, Jack Doan,
+  Leonard Anderweit and contributors (drivers/hwmon/aquacomputer_d5next.c in the kernel, and the
+  extended version at https://github.com/aleksamagicka/aquacomputer_d5next-hwmon with its
+  reverse-engineering notes in re-docs/). Used as the reference for the report layouts, offsets,
+  checksums, the "save" report, fan control modes, curve and power-limit fields, and the Aquaero,
+  Aquastream XT and Leakshield specifics. No code is copied; the protocol facts were reimplemented
+  in Python.
+
+* The captured QUADRO reports in tests/data/ (quadro_control.bin, quadro_sensors.bin,
+  quadro_virt_sensors.bin) come from that repository's re-docs/quadro directory
+  (contributed by Leonard Anderweit) and are used as test fixtures.
+
+* liquidctl (https://github.com/liquidctl/liquidctl), GPL-3.0-or-later, by Jonas Malaco and
+  contributors, whose Aquacomputer driver by Aleksa Savic documents the direct manual-mode write.
+  Used as a reference only.
+
+* The user interface shares its design system (colour tokens, style sheet, icon style and small
+  widgets) with the author's ReolinkLinux, EZP2019Linux and FirmwareLab applications (MIT).
+
+Runtime libraries (not bundled)
+-------------------------------
+
+* Qt / PySide6 (LGPLv3).

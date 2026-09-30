@@ -122,8 +122,9 @@ def test_import_dialog_reads_device(qapp, window):
 
 
 def test_curve_editor_interaction(qapp):
-    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtCore import Qt
     from PySide6.QtGui import QMouseEvent
+
     from aquasuitelinux.gui.curve_editor import CurveEditor
     ed = CurveEditor()
     ed.resize(600, 400)

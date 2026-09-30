@@ -21,7 +21,8 @@ def service_running(path: Path | None = None) -> bool:
         client.close()
 
 
-def local_engine(demo: bool = False, config_path: Path | None = None, start: bool = True) -> LocalAPI:
+def local_engine(demo: bool = False, config_path: Path | None = None, start: bool = True,
+                 control: bool = True) -> LocalAPI:
     path = config_path or config_mod.user_config_path()
     if demo:
         from .demo import demo_config, demo_provider
@@ -37,7 +38,7 @@ def local_engine(demo: bool = False, config_path: Path | None = None, start: boo
         def save(c):
             config_mod.save(c, path, 0o600)
         mode = "standalone"
-    engine = Engine(cfg, provider, mode=mode, save_config=save)
+    engine = Engine(cfg, provider, mode=mode, save_config=save, control=control)
     if start:
         engine.tick()
         engine.start()

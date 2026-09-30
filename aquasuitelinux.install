@@ -1,0 +1,27 @@
+post_install() {
+  udevadm control --reload-rules 2>/dev/null || true
+  udevadm trigger --subsystem-match=hidraw 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
+  echo ":: AquasuiteLinux installed. Start it from your application menu, or run: aquasuitelinux"
+  echo ":: To keep fan control running at boot and without the window:"
+  echo "::     sudo systemctl enable --now aquasuited"
+  echo ":: (or use Settings → Enable background service in the app)."
+  echo ":: If a device was already plugged in and the app can't open it, re-plug it once."
+}
+
+post_upgrade() {
+  udevadm control --reload-rules 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
+  if systemctl is-active --quiet aquasuited.service 2>/dev/null; then
+    systemctl try-restart aquasuited.service 2>/dev/null || true
+  fi
+}
+
+pre_remove() {
+  systemctl disable --now aquasuited.service 2>/dev/null || true
+}
+
+post_remove() {
+  udevadm control --reload-rules 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
+}

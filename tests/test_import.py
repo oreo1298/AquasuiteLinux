@@ -95,6 +95,7 @@ def test_backup_format_roundtrip(quadro_control):
     assert found[0].data == quadro_control and found[0].serial == "06140-01384"
     assert aquasuite.backup_bytes(b, devices.QUADRO) == quadro_control
     import pytest
+
     from aquasuitelinux.core.errors import AquaError
     with pytest.raises(AquaError):
         aquasuite.backup_bytes(b, devices.OCTO)

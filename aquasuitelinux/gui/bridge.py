@@ -43,10 +43,6 @@ class Bridge(QObject):
     def mode(self) -> str:
         return getattr(self.api, "mode", "standalone")
 
-    @property
-    def read_only(self) -> bool:
-        return False
-
     def start(self) -> None:
         self.reload_config()
         self.refresh()

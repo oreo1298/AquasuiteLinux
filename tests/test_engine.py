@@ -198,3 +198,63 @@ def test_backup_restore_roundtrip(demo_engine):
     demo_engine.restore(QUADRO, b)
     s = demo_engine.device_settings(QUADRO)
     assert s["flow_pulses"] == 169 and s["temp_offsets"][0] == 0
+
+
+def test_rewrite_guard_stops_writing_rejected_settings(monkeypatch):
+    import aquasuitelinux.core.device as device_mod
+    monkeypatch.setattr(device_mod, "CTRL_CACHE_SECONDS", 0.0)       # re-read the settings every tick
+    cfg = Config()
+    cfg.controllers = [ControllerConfig(id="c", kind="curve", input=f"{QUADRO}/temp1", points=[[20, 20], [40, 100]])]
+    cfg.outputs[f"{QUADRO}/fan1"] = OutputConfig(controller="c")
+    eng, _world, devs = sim_engine(cfg)
+    q = sim(devs[0])
+    original = devs[0].transport.set_feature
+
+    def stubborn(data):
+        # a device that silently resets the first curve point of fan 1 after every write
+        original(data)
+        if data[0] == devs[0].spec.ctrl_id:
+            rep = control.ControlReport(devs[0].spec, q.ctrl)
+            fc = rep.fan(0)
+            fc.curve_temps = [1234, *fc.curve_temps[1:]]
+            rep.set_fan(0, fc)
+            q.ctrl = bytearray(rep.seal())
+    devs[0].transport.set_feature = stubborn
+    try:
+        snap = run_ticks(eng, 22, pause=0.3)
+        assert q.settings_writes <= 5                     # 3 device writes, then software control
+        o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]
+        assert o["placement"] == "software" and "didn't keep" in o["reason"]
+    finally:
+        eng.stop()
+
+
+def test_device_not_following_curve_moves_to_software(monkeypatch):
+    import aquasuitelinux.core.engine as engine_mod
+    monkeypatch.setattr(engine_mod, "CURVE_CHECK_SECONDS", 1.0)
+    cfg = Config()
+    cfg.controllers = [ControllerConfig(id="c", kind="curve", input=f"{QUADRO}/temp1", points=[[0, 20], [100, 20]])]
+    cfg.outputs[f"{QUADRO}/fan1"] = OutputConfig(controller="c", min_power=0, hold_min=False)
+    eng, _world, devs = sim_engine(cfg)
+    q = sim(devs[0])
+    q.source_value = lambda index: None                # the firmware reads "nothing": runs at fallback (100 %)
+    try:
+        snap = run_ticks(eng, 14, pause=0.25)
+        o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]
+        assert o["placement"] == "software" and "didn't follow" in o["reason"]
+        assert any("Please report" in e[2] for e in snap["events"])
+    finally:
+        eng.stop()
+
+
+def test_pump_is_never_stopped_by_a_controller():
+    cfg = Config()
+    cfg.controllers = [ControllerConfig(id="z", kind="fixed", power=0)]
+    cfg.outputs[f"{D5}/pump"] = OutputConfig(controller="z", min_power=30, hold_min=False, placement="software")
+    eng, _world, _devs = sim_engine(cfg, kinds=("d5next",))
+    try:
+        snap = run_ticks(eng, 4)
+        o = {o["id"]: o for o in snap["outputs"]}[f"{D5}/pump"]
+        assert o["target"] == 30
+    finally:
+        eng.stop()

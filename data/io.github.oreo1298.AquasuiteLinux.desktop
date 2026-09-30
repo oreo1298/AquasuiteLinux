@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=AquasuiteLinux
+GenericName=Water Cooling Control
+Comment=Monitor Aquacomputer devices and control fans with curves, Delta T and alarms
+Exec=aquasuitelinux
+Icon=io.github.oreo1298.AquasuiteLinux
+Terminal=false
+Categories=System;Monitor;HardwareSettings;Settings;Qt;
+Keywords=Aquacomputer;aquasuite;QUADRO;OCTO;D5 NEXT;aquaero;fan;fan curve;water cooling;delta T;temperature;
+StartupNotify=true
+StartupWMClass=aquasuitelinux

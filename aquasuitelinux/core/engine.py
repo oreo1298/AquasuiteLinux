@@ -44,6 +44,9 @@ log = logging.getLogger(__name__)
 RESCAN_SECONDS = 10.0
 FEED_VERIFY_SECONDS = 6.0
 MIN_CHANGE = 1.0            # % — smaller software power changes are not written
+MAX_REWRITES = 3            # the same settings are written at most this often if the device doesn't keep them
+CURVE_TOLERANCE = 20.0      # % — reported output may differ this much from the expected one
+CURVE_CHECK_SECONDS = 90.0  # … for this long before the device's curves are no longer trusted
 
 
 # ---------------------------------------------------------------------- providers
@@ -151,6 +154,7 @@ class OutputRuntime:
     target: float | None = None
     last_written: float | None = None
     placement_written: str = ""
+    mismatch_since: float | None = None
 
 
 def soft_type(unit: str) -> int:
@@ -159,7 +163,8 @@ def soft_type(unit: str) -> int:
 
 class Engine:
     def __init__(self, config: Config, provider: DeviceProvider, mode: str = "standalone",
-                 save_config=None, allow_shutdown: bool = False, system_sensors=None):
+                 save_config=None, allow_shutdown: bool = False, system_sensors=None, control: bool = True):
+        self.control = control           # False: read only — never touch outputs or software sensors
         self.config = config
         self.provider = provider
         self.mode = mode
@@ -184,6 +189,9 @@ class Engine:
         self.fed_devices: set[str] = set()
         self.last_write: dict[str, float] = {}
         self.write_failures: dict[str, int] = {}
+        self.rewrites: dict[str, tuple[str, int]] = {}           # device -> (desired settings, times written)
+        self.settings_stuck: set[str] = set()                    # devices that keep rejecting our settings
+        self.curve_suspect: set[str] = set()                     # devices not following their stored curves
         self._plan_dirty = True
         self._last_tick = 0.0
         self._last_scan = 0.0
@@ -219,7 +227,8 @@ class Engine:
         if self._thread:
             self._thread.join(timeout=5)
         with self.lock:
-            self._shutdown_outputs()
+            if self.control:
+                self._shutdown_outputs()
             for dev in self.devices.values():
                 dev.close()
             if self.system is not None and hasattr(self.system, "close"):
@@ -265,6 +274,8 @@ class Engine:
             for cid in list(self.ctrl_states):
                 if cfg.controller(cid) != old.controller(cid):
                     self.ctrl_states.pop(cid, None)
+            self.settings_stuck.clear()
+            self.rewrites.clear()
             if cfg.settings.history_minutes != old.settings.history_minutes or \
                     cfg.settings.interval != old.settings.interval:
                 self.history = History(int(cfg.settings.history_minutes * 60 / max(0.2, cfg.settings.interval)))
@@ -421,16 +432,17 @@ class Engine:
                     del self.overrides[oid]
                     self._plan_dirty = True
 
-            self._verify_feeds(now)
-            if self._plan_dirty or fans_max != getattr(self, "_fans_max", False):
-                self._fans_max = fans_max
-                self._plan(fans_max)
-                self._plan_dirty = False
-
             ctrl_values = self._run_controllers(dt)
-            self._drive_outputs(ctrl_values, dt, now, fans_max)
-            self._push_feeds(now)
-            self._push_leakshield()
+            if self.control:
+                self._verify_feeds(now)
+                if self._plan_dirty or fans_max != getattr(self, "_fans_max", False):
+                    self._fans_max = fans_max
+                    self._plan(fans_max)
+                    self._plan_dirty = False
+                self._drive_outputs(ctrl_values, dt, now, fans_max)
+                self._verify_device_outputs(now)
+                self._push_feeds(now)
+                self._push_leakshield()
             self._record(now)
             self._snapshot = self._build_snapshot(ctrl_values)
             return self._snapshot
@@ -503,6 +515,10 @@ class Engine:
                 return False, "invalid output to follow"
             plan.follow_index = fi
             return True, ""
+        if plan.device_key in self.curve_suspect:
+            return False, f"the {spec.name} didn't follow the curve stored on it as expected"
+        if plan.device_key in self.settings_stuck:
+            return False, f"the {spec.name} didn't keep the settings written to it"
         if ctrl.kind != "curve":
             return False, f"the {spec.name} can only run curve controllers itself"
         if not ctrl.input:
@@ -551,6 +567,8 @@ class Engine:
             if plan.placement == "unmanaged":
                 rt.target = None
                 continue
+            if self.devices[plan.device_key].spec.fans[plan.index].pump and not oc.hold_min:
+                oc = OutputConfig(**{**oc.__dict__, "hold_min": True})   # a controller never stops a pump
             if plan.placement == "device":
                 c = ctrl_values.get(plan.controller_id)
                 if plan.follow_index is not None:
@@ -635,6 +653,7 @@ class Engine:
             self._write_failed(key, exc)
             return
         before = rep.checksum()
+        signature = []
         for plan in plans:
             ctrl = self.config.controller(plan.controller_id)
             oc = self.config.outputs.get(plan.output_id) or OutputConfig()
@@ -650,16 +669,31 @@ class Engine:
                 want.curve_temps = [round(x * 100) for x, _ in pts]
                 want.curve_powers = [round(controllers.clamp(y) * 100) for _, y in pts]
             rep.set_fan(plan.index, want)
-            rep.set_setup(plan.index, FanSetup(hold_min=oc.hold_min, start_boost=oc.start_boost,
-                                               min_power=round(oc.min_power * 100),
-                                               max_power=round(oc.max_power * 100),
-                                               fallback=round(oc.fallback * 100)))
+            pump = dev.spec.fans[plan.index].pump
+            setup = FanSetup(hold_min=oc.hold_min or pump, start_boost=oc.start_boost,
+                             min_power=round(oc.min_power * 100), max_power=round(oc.max_power * 100),
+                             fallback=round(oc.fallback * 100))
+            rep.set_setup(plan.index, setup)
+            signature.append((plan.index, want.mode, want.source, tuple(want.curve_temps), tuple(want.curve_powers),
+                              setup.hold_min, setup.start_boost, setup.min_power, setup.max_power, setup.fallback))
         placement_new = [p for p in plans if self.runtime[p.output_id].placement_written != "device"]
         if rep.checksum() == before:
             for p in placement_new:
                 self.runtime[p.output_id].placement_written = "device"
+            self.rewrites.pop(key, None)
             return
         if now - self.last_write.get(key, 0.0) < 1.0:
+            return
+        # guard the device's memory: if it keeps changing what we write, stop rewriting it
+        wanted = repr(signature)
+        last, count = self.rewrites.get(key, ("", 0))
+        count = count + 1 if last == wanted else 1
+        self.rewrites[key] = (wanted, count)
+        if count > MAX_REWRITES:
+            self.settings_stuck.add(key)
+            self._plan_dirty = True
+            self.event("warning", f"{dev.spec.name} did not keep the controller settings after {MAX_REWRITES} "
+                                  "writes; its outputs are now controlled in software")
             return
         try:
             dev.write_control(rep.seal())
@@ -733,6 +767,30 @@ class Engine:
                 name = self.devices[key].spec.name if key in self.devices else key
                 self.event("warning", f"{name} does not report the software sensor values back; its outputs "
                                       "are now controlled in software instead")
+
+    def _verify_device_outputs(self, now: float) -> None:
+        """Outputs run by the device should report roughly the power we expect from their curve."""
+        for oid, plan in self.plans.items():
+            rt = self.runtime.get(oid)
+            if rt is None:
+                continue
+            reported = self.readings.get(f"{oid}.percent")
+            if (plan.placement != "device" or plan.follow_index is not None or rt.target is None
+                    or rt.placement_written != "device" or reported is None or reported.value is None):
+                rt.mismatch_since = None
+                continue
+            if abs(reported.value - rt.target) <= CURVE_TOLERANCE:
+                rt.mismatch_since = None
+                continue
+            if rt.mismatch_since is None:
+                rt.mismatch_since = now
+            elif now - rt.mismatch_since > CURVE_CHECK_SECONDS and plan.device_key not in self.curve_suspect:
+                self.curve_suspect.add(plan.device_key)
+                self._plan_dirty = True
+                dev = self.devices.get(plan.device_key)
+                self.event("warning", f"{dev.spec.name if dev else plan.device_key}: {self._output_name(oid)} "
+                                      f"reports {reported.value:.0f} % where its curve gives {rt.target:.0f} %; "
+                                      "its outputs are now controlled in software. Please report this.")
 
     def _push_leakshield(self) -> None:
         for ls in self.config.leakshield:

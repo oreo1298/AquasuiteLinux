@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.oreo1298.AquasuiteLinux</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>AquasuiteLinux</name>
+  <summary>Monitor Aquacomputer devices and control fans with curves, Delta T and alarms</summary>
+  <description>
+    <p>
+      A native Linux app for Aquacomputer water cooling devices: QUADRO, OCTO, D5 NEXT, aquaero,
+      farbwerk, high flow NEXT, LEAKSHIELD and aquastream. It shows every sensor, builds virtual
+      sensors such as Delta T (coolant above ambient), runs fan curves and other controllers on the
+      device or in software, raises alarms, switches profiles and imports the fan curves aquasuite
+      stored on your devices.
+    </p>
+    <p>AquasuiteLinux is an independent project and is not affiliated with Aqua Computer.</p>
+  </description>
+  <launchable type="desktop-id">io.github.oreo1298.AquasuiteLinux.desktop</launchable>
+  <url type="homepage">https://github.com/oreo1298/AquasuiteLinux</url>
+  <url type="bugtracker">https://github.com/oreo1298/AquasuiteLinux/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/oreo1298/AquasuiteLinux/main/docs/screenshots/overview-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/oreo1298/AquasuiteLinux/main/docs/screenshots/controllers-dark.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.0.0" date="2026-09-30"/>
+  </releases>
+</component>

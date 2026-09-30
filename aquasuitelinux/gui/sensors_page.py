@@ -205,7 +205,7 @@ class SensorsPage(QWidget):
                         parent = QTreeWidgetItem([group])
                         parent.setForeground(0, self.tree.palette().placeholderText())
                         top.addChild(parent)
-                        parent.setExpanded(group != "Software sensors" and group != "aquabus")
+                        parent.setExpanded(group != "aquabus")
                         sub[group] = parent
                 item = QTreeWidgetItem([r["label"], "", "", ""])
                 item.setData(0, Qt.UserRole, r["id"])
