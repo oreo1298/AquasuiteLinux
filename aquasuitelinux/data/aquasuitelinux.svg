@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6b9bff"/>
+      <stop offset="1" stop-color="#4a5de0"/>
+    </linearGradient>
+    <linearGradient id="blade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e3e9ff"/>
+    </linearGradient>
+    <linearGradient id="drop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7ee3ff"/>
+      <stop offset="1" stop-color="#2fb8e8"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="232" height="232" rx="56" fill="url(#bg)"/>
+  <!-- fan frame -->
+  <circle cx="118" cy="128" r="76" fill="none" stroke="#ffffff" stroke-width="10" opacity="0.35"/>
+  <!-- blades -->
+  <g fill="url(#blade)" transform="rotate(12 118 128)">
+    <path d="M118 128 C 104 104, 106 66, 132 60 C 152 56, 160 80, 146 100 C 138 112, 128 120, 118 128 Z"/>
+    <path d="M118 128 C 142 114, 180 116, 186 142 C 190 162, 166 170, 146 156 C 134 148, 126 138, 118 128 Z"/>
+    <path d="M118 128 C 132 152, 130 190, 104 196 C 84 200, 76 176, 90 156 C 98 144, 108 136, 118 128 Z"/>
+    <path d="M118 128 C 94 142, 56 140, 50 114 C 46 94, 70 86, 90 100 C 102 108, 110 118, 118 128 Z"/>
+  </g>
+  <circle cx="118" cy="128" r="17" fill="#4a5de0"/>
+  <circle cx="118" cy="128" r="9" fill="#ffffff"/>
+  <!-- coolant drop -->
+  <path d="M192 142 C 192 142, 222 176, 222 196 A 30 30 0 0 1 162 196 C 162 176, 192 142, 192 142 Z"
+        fill="url(#drop)" stroke="#ffffff" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M178 198 A 14 14 0 0 0 190 212" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" opacity="0.85"/>
+</svg>
