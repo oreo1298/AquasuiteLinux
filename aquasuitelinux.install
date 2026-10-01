@@ -6,7 +6,8 @@ post_install() {
   echo ":: AquasuiteLinux installed. Start it from your application menu, or run: aquasuitelinux"
   echo ":: To keep fan control running at boot and without the window:"
   echo "::     sudo systemctl enable --now aquasuited"
-  echo ":: (or use Settings → Enable background service in the app)."
+  echo ":: (or use Settings → Enable background service in the app). Settings you already made"
+  echo ":: in the app are offered for moving to the service the next time you open the app."
   echo ":: If a device was already plugged in and the app can't open it, re-plug it once."
 }
 

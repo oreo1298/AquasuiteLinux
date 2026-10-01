@@ -108,3 +108,44 @@ def test_cli_doctor_runs_without_devices(args, capsys):
     main(args)
     out = capsys.readouterr().out
     assert "== System ==" in out and "== Summary ==" in out
+
+
+def _engine_api(cfg=None):
+    from aquasuitelinux.core.api import LocalAPI
+    from aquasuitelinux.core.config import Config
+    from aquasuitelinux.core.demo import demo_provider
+    from aquasuitelinux.core.engine import Engine
+    eng = Engine(cfg or Config(), demo_provider(), mode="service")
+    eng.tick()
+    return LocalAPI(eng)
+
+
+def _user_setup():
+    from aquasuitelinux.core import config as config_mod
+    from aquasuitelinux.core.demo import demo_config
+    path = config_mod.user_config_path()
+    config_mod.save(demo_config(), path)
+    return path
+
+
+def test_empty_service_with_a_setup_left_in_the_user_config(tmp_path):
+    """What happened on real hardware: the service was enabled by hand and started with no setup."""
+    path = _user_setup()
+    api = _engine_api()
+    try:
+        doc, lines, _bulk, _sim = make(tmp_path, api=api)
+        doc.run()
+        text = "\n".join(lines)
+        assert "background service: 0 virtual sensors, 0 controllers, 0 fans assigned" in text
+        assert "2 virtual sensors, 5 controllers, 5 fans assigned, 2 alarms" in text
+        assert f"aquactl config --load {path}" in text
+        assert any("the service has no fan setup" in f for f in doc.findings)
+    finally:
+        api.close()
+
+
+def test_stored_curve_on_an_unfed_software_sensor_is_reported(tmp_path):
+    doc, _lines, _bulk, _sim = make(tmp_path)
+    doc.run()
+    # the simulated QUADRO comes with curves on software sensor 1, like a QUADRO set up by aquasuite
+    assert any("fan1 runs a curve stored on the device that reads software sensor 1" in f for f in doc.findings)

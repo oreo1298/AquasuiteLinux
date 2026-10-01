@@ -23,6 +23,7 @@ class GuiSettings:
     show_unavailable: bool = False
     window: dict = field(default_factory=dict)
     welcomed: bool = False
+    declined_move: float = 0.0       # mtime of the user config whose move to the service was declined
 
     @classmethod
     def load(cls, path: Path | None = None) -> GuiSettings:

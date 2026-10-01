@@ -73,6 +73,7 @@ class Doctor:
         self.out(f"AquasuiteLinux doctor — {time.strftime('%Y-%m-%d %H:%M:%S')}")
         self.system()
         api = self.service()
+        self.configuration(api)
         self.udev()
         nodes = self.hardware()
         for node, spec in nodes:
@@ -155,6 +156,37 @@ class Doctor:
             self.finding(f"the service doesn't answer: {exc}")
             return None
         return api
+
+    def configuration(self, api) -> None:
+        """Where the fan setup lives: the service has its own, separate from the one the app uses alone."""
+        from . import config as config_mod
+        self.head("Fan setup")
+        path = _user_config_path()
+        local = None
+        if path.exists():
+            try:
+                local = config_mod.load(path)
+            except AquaError as exc:
+                self.finding(str(exc))
+        self.line(f"app without the service ({path}): {local.setup_summary() if local else 'no file'}")
+        if api is None:
+            if local is None or not local.has_setup():
+                self.line("nothing is set up yet: no fan is controlled")
+            return
+        try:
+            remote = config_mod.Config.from_dict(api.get_config())
+        except AquaError as exc:
+            self.finding(f"the service doesn't answer: {exc}")
+            return
+        self.line(f"background service: {remote.setup_summary()}")
+        if remote.has_setup():
+            return
+        if local is not None and local.has_setup():
+            self.finding(f"the service has no fan setup, so it controls none of your fans. Your setup "
+                         f"({local.setup_summary()}) is in {path}, which only the app uses without the service. "
+                         f"Move it: open the app (it offers to), or run: aquactl config --load {path}")
+        else:
+            self.finding("no fan is set up, so the service controls none of your fans")
 
     def udev(self) -> None:
         self.head("Permissions (udev rule)")
@@ -241,8 +273,10 @@ class Doctor:
                 self.finding(f"{spec.name} sends no status reports")
         groups: dict[str, list[str]] = {}
         outputs: dict[str, dict[str, float | None]] = {}
+        values: dict[str, float | None] = {}
         for r in dev.poll():
             key = r.id.split("/", 1)[1]
+            values[key] = r.value
             if "." in key:                                     # fan1.rpm, fan1.percent, …
                 name, _, what = key.partition(".")
                 outputs.setdefault(name, {})[what] = r.value
@@ -268,9 +302,9 @@ class Doctor:
             except AquaError as exc:
                 self.finding(f"{spec.name}: reading the settings report failed: {exc}")
         if settings:
-            self.settings(spec, settings)
+            self.settings(spec, settings, values)
 
-    def settings(self, spec: DeviceSpec, data: dict) -> None:
+    def settings(self, spec: DeviceSpec, data: dict, values: dict | None = None) -> None:
         valid = data.get("valid", True) or not spec.ctrl_crc
         self.line(f"settings report: {'checksum OK' if valid else 'CHECKSUM WRONG'}" if spec.ctrl_crc
                   else "settings report: read")
@@ -291,6 +325,10 @@ class Doctor:
                 c = f["curve"]
                 text += f", curve {c[0][0]:g}→{c[0][1]:g} % … {c[-1][0]:g}→{c[-1][1]:g} %"
             self.line(text, 2)
+            if (mode == control.MODE_CURVE and src_text.startswith("virt") and values is not None
+                    and values.get(src_text) is None):
+                self.finding(f"{spec.name} {f['key']} runs a curve stored on the device that reads software sensor "
+                             f"{src_text[4:]}, but nothing sends that sensor a value, so the curve can't work")
 
     def service_state(self, api) -> None:
         self.head("What the service does")
@@ -477,6 +515,19 @@ class Doctor:
                     vals = {k: v for k, _l, _kind, v, _g in parse_status(spec, rep)}
                     value = vals.get(f"virt{slot}")
         return got, value
+
+
+def _user_config_path() -> Path:
+    """The app's own configuration, for the user who ran ``sudo aquactl doctor`` too."""
+    from . import config as config_mod
+    sudo_user = os.environ.get("SUDO_USER")
+    if os.geteuid() == 0 and sudo_user:
+        try:
+            import pwd
+            return Path(pwd.getpwnam(sudo_user).pw_dir) / ".config" / "aquasuitelinux" / "config.json"
+        except (ImportError, KeyError):
+            pass
+    return config_mod.user_config_path()
 
 
 def _has_group(gid: int) -> bool:

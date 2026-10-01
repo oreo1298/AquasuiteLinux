@@ -457,3 +457,29 @@ def test_a_failing_step_is_reported_once_and_the_rest_keeps_running(monkeypatch)
         assert o["placement"] == "software" and o["target"] == 43      # 40 % scaled into 5…100 %
     finally:
         eng.stop()
+
+
+def test_loaded_config_is_adopted_by_the_connected_device():
+    """A setup saved under another key (hwmon fallback, another QUADRO) applies to the one connected."""
+    eng, _world, _devs = sim_engine(Config())
+    try:
+        run_ticks(eng, 1)
+        cfg = Config()
+        cfg.controllers = [ControllerConfig(id="f", kind="fixed", power=50)]
+        cfg.outputs["quadro/fan1"] = OutputConfig(controller="f", placement="software")
+        eng.set_config(cfg, save=False)
+        assert f"{QUADRO}/fan1" in eng.config.outputs
+        snap = run_ticks(eng, 2)
+        assert {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]["placement"] == "software"
+    finally:
+        eng.stop()
+
+
+def test_setup_summary():
+    cfg = Config()
+    assert not cfg.has_setup() and cfg.setup_summary() == "0 virtual sensors, 0 controllers, 0 fans assigned"
+    cfg.outputs["x/fan1"] = OutputConfig(name="only a name")
+    assert not cfg.has_setup()
+    cfg.controllers = [ControllerConfig(id="f", kind="fixed")]
+    cfg.outputs["x/fan1"].controller = "f"
+    assert cfg.has_setup() and cfg.setup_summary() == "0 virtual sensors, 1 controller, 1 fan assigned"

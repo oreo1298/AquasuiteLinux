@@ -10,7 +10,7 @@
 # To update later: `git pull` then `makepkg -sif`.
 
 pkgname=aquasuitelinux
-pkgver=1.0.1
+pkgver=1.0.2
 pkgrel=1
 pkgdesc="Monitoring and fan control for Aquacomputer devices: fan curves, Delta T, alarms, aquasuite import"
 arch=('any')

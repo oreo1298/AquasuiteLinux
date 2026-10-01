@@ -116,6 +116,47 @@ def test_settings_turn_device_feeds_off(qapp, window):
     assert "turned off in Settings" in outs[f"{QUADRO}/fan1"]["reason"]
 
 
+@pytest.mark.parametrize("answer", ["yes", "no"])
+def test_offers_to_move_settings_to_an_empty_service(qapp, monkeypatch, answer):
+    from PySide6.QtWidgets import QMessageBox
+
+    from aquasuitelinux.core import config as config_mod
+    from aquasuitelinux.core.api import LocalAPI
+    from aquasuitelinux.core.config import Config
+    from aquasuitelinux.core.demo import demo_config, demo_provider
+    from aquasuitelinux.core.engine import Engine
+    from aquasuitelinux.gui.bridge import Bridge
+    from aquasuitelinux.gui.main_window import MainWindow
+    from aquasuitelinux.gui.settings import GuiSettings
+    config_mod.save(demo_config(), config_mod.user_config_path())
+    asked = []
+
+    def question(*args, **kwargs):
+        asked.append(args[2])
+        return QMessageBox.Yes if answer == "yes" else QMessageBox.No
+    monkeypatch.setattr(QMessageBox, "question", question)
+    eng = Engine(Config(), demo_provider(), mode="service")          # a service started with no setup
+    eng.tick()
+    eng.start()
+    bridge = Bridge(LocalAPI(eng))
+    gs = GuiSettings(tray=False)
+    win = MainWindow(bridge, gs, None)
+    bridge.start()
+    pump(qapp, 2.0)
+    try:
+        assert len(asked) == 1 and "5 controllers" in asked[0]
+        if answer == "yes":
+            assert len(eng.config.controllers) == 5 and eng.config.outputs
+        else:
+            assert not eng.config.controllers and gs.declined_move
+            win._move_checked = False
+            win.offer_settings_move()                                   # declined: not asked again
+            assert len(asked) == 1
+    finally:
+        win.quit()
+        pump(qapp, 0.3)
+
+
 def test_delta_t_dialog_computes_preview(qapp, window):
     from aquasuitelinux.core.demo import QUADRO
     from aquasuitelinux.gui.dialogs import VirtualSensorDialog

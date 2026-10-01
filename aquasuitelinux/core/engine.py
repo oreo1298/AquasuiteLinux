@@ -290,6 +290,8 @@ class Engine:
             if cfg.settings.history_minutes != old.settings.history_minutes or \
                     cfg.settings.interval != old.settings.interval:
                 self.history = History(int(cfg.settings.history_minutes * 60 / max(0.2, cfg.settings.interval)))
+            for dev in list(self.devices.values()):
+                self._adopt(dev)        # e.g. settings made under another key (hwmon) or moved from the app
             self._plan_dirty = True
         if save and self.save_config:
             self.save_config(cfg)

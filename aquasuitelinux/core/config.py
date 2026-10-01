@@ -223,6 +223,23 @@ class Config:
     def copy(self) -> Config:
         return Config.from_dict(json.loads(json.dumps(self.to_dict())))
 
+    def has_setup(self) -> bool:
+        """Whether this configuration makes the engine do anything (a fresh one doesn't)."""
+        return bool(self.virtual_sensors or self.controllers or self.alarms or self.feeds or self.leakshield
+                    or self.profiles or any(o.controller for o in self.outputs.values()))
+
+    def setup_summary(self) -> str:
+        """E.g. "1 virtual sensor, 2 controllers, 3 fans assigned"."""
+        def n(count: int, one: str, many: str) -> str:
+            return f"{count} {one if count == 1 else many}"
+        assigned = sum(1 for o in self.outputs.values() if o.controller)
+        parts = [n(len(self.virtual_sensors), "virtual sensor", "virtual sensors"),
+                 n(len(self.controllers), "controller", "controllers"),
+                 n(assigned, "fan assigned", "fans assigned")]
+        if self.alarms:
+            parts.append(n(len(self.alarms), "alarm", "alarms"))
+        return ", ".join(parts)
+
     # ------------------------------------------------------------------ lookups
     def controller(self, cid: str) -> ControllerConfig | None:
         return next((c for c in self.controllers if c.id == cid), None)

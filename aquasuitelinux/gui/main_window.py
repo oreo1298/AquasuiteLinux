@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from .. import __app_name__, __version__
 from ..core.config import DELTA_T_CURVE, ControllerConfig, new_id
+from ..core.errors import AquaError
 from .alarms_page import AlarmsPage
 from .controllers_page import ControllersPage
 from .dialogs import (
@@ -95,6 +96,8 @@ class MainWindow(QMainWindow):
         bridge.message.connect(self.show_message)
         bridge.snapshot.connect(self._update_status)
         bridge.lost.connect(self._lost)
+        self._move_checked = False
+        bridge.config_changed.connect(lambda _cfg: QTimer.singleShot(300, self.offer_settings_move))
 
         self._shortcuts()
         self._restore()
@@ -391,6 +394,39 @@ class MainWindow(QMainWindow):
         self.bridge.api = api
         self.bridge.start()
         self.show_message("Now using the background service", "success")
+
+    def offer_settings_move(self) -> None:
+        """A service with no setup, and a setup made while the app ran without it: offer to move it.
+
+        Settings made without the service live in ~/.config/aquasuitelinux/config.json; the service
+        has its own (/etc/aquasuitelinux/config.json). If the service was started by hand
+        (systemctl enable --now), nothing moved them, and the fans seem to have lost their curves.
+        """
+        if self._move_checked or self.bridge.mode != "service":
+            return
+        self._move_checked = True
+        if self.bridge.config.has_setup():
+            return
+        from ..core import config as config_mod
+        path = config_mod.user_config_path()
+        try:
+            local = config_mod.load(path)
+            stamp = path.stat().st_mtime
+        except (OSError, AquaError):
+            return
+        if not local.has_setup() or self.gs.declined_move == stamp:
+            return
+        answer = QMessageBox.question(
+            self, "Move your settings to the background service?",
+            f"The background service is running but has no fan setup, so it controls none of your fans.\n\n"
+            f"The settings you made while {__app_name__} ran without it ({local.setup_summary()}) are still in "
+            f"{path}.\n\nMove them to the service?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if answer == QMessageBox.Yes:
+            self.bridge.apply(local, "Your settings now run in the background service")
+        else:
+            self.gs.declined_move = stamp
+            self.gs.save()
 
     # ------------------------------------------------------------------ tray
     def _setup_tray(self) -> None:

@@ -143,6 +143,11 @@ from your application menu. To keep fan control running at boot and without the 
 sudo systemctl enable --now aquasuited
 ```
 
+The service keeps its own settings (`/etc/aquasuitelinux/config.json`), separate from the app's when it
+runs without it (`~/.config/aquasuitelinux/config.json`). If you set things up in the app first, it offers
+to move them to the service the next time you open it (or: `aquactl config --load
+~/.config/aquasuitelinux/config.json`).
+
 (or *Settings → Enable background service* in the app). To update later:
 `cd AquasuiteLinux && git pull && makepkg -sif`.
 
@@ -332,6 +337,9 @@ tests whether your device takes software sensor values (it uses one unused slot 
   device receives it before storing the curve (a few seconds; the device keeps its settings meanwhile).
 - **Fans go to full speed when I quit**: that's the fallback power of software-controlled outputs. Enable
   the background service, or set *When control stops* to *Leave them as they are* in Settings.
+- **The service runs but no fan is controlled, and my curves are gone**: the service started with its own,
+  empty settings; yours are still in `~/.config/aquasuitelinux/config.json`. Open the app and accept moving
+  them, or run `aquactl config --load ~/.config/aquasuitelinux/config.json`. `aquactl doctor` shows both.
 - **Changing settings in the app says "Not allowed"** (service mode): changing the service's settings
   needs membership in `wheel`, `sudo`, `admin` or `aquasuite`: `sudo usermod -aG aquasuite $USER`, then
   log out and in.

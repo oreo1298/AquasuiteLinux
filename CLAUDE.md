@@ -41,6 +41,10 @@ Arch Linux (the user runs a QUADRO).
   marked `feed_broken` and its bulk interface released (`stop_feed`). Octo / farbwerk 360 layouts are unverified.
 - Every tick step runs through `Engine._step`: an exception is reported once per `ERROR_REPEAT_SECONDS`
   and the other steps (and the snapshot) still run. Keep new steps inside it.
+- Two configs: the service's (`/etc/aquasuitelinux/config.json`) and the app's without it
+  (`~/.config/aquasuitelinux/config.json`). Enabling the service by hand leaves it empty; the GUI offers to
+  move the user's setup into an empty service (`MainWindow.offer_settings_move`), `set_config` re-keys it to
+  the connected devices (`_adopt`), and `aquactl doctor` flags it.
 - `aquactl doctor` (`core/doctor.py`) is the first thing to ask users for; `--feed-test` is the only part
   that writes (one unused software sensor slot, cleared afterwards) and refuses while the service runs.
 - Software placement neutralises the device's min/max (0 / 100 %) because scaling is done in software;
