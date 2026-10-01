@@ -1,4 +1,4 @@
-"""The interactive fan curve: drag points, double-click to add, right-click or Delete to remove.
+"""The interactive fan curve: drag points, double-click (or Insert) to add, right-click or Delete to remove.
 
 A live marker shows where the controller's input is right now and what it outputs.
 """
@@ -34,8 +34,10 @@ def default_range(unit: str, points: list[list[float]]) -> tuple[float, float]:
 
 class CurveEditor(QWidget):
     changed = Signal(list)
+    selection_changed = Signal(object)      # index of the selected point, or None
 
-    MAX_POINTS = 16
+    MAX_POINTS = 16                         # what a QUADRO / OCTO / D5 NEXT stores; software curves use the same
+    MIN_POINTS = 2
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -52,7 +54,7 @@ class CurveEditor(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMinimumSize(360, 240)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setToolTip("Drag points to shape the curve · double-click to add a point · "
+        self.setToolTip("Drag points to shape the curve · double-click (or Insert) to add a point · "
                         "right-click or Delete to remove one · arrow keys nudge the selected point")
         theme.changed.connect(lambda _p: self.update())
 
@@ -63,6 +65,76 @@ class CurveEditor(QWidget):
         self.x_range = default_range(unit, self.points)
         self.selected = None
         self.update()
+
+    def select(self, index: int | None) -> None:
+        index = index if index is not None and 0 <= index < len(self.points) else None
+        if index != self.selected:
+            self.selected = index
+            self.update()
+            self.selection_changed.emit(index)
+
+    # ------------------------------------------------------------------ adding and removing points
+    def add_point(self) -> bool:
+        """Add a point on the curve (so its shape stays the same): after the selected point, or in the
+        widest gap. Returns False when the curve is full or the points are too close together."""
+        if len(self.points) >= self.MAX_POINTS:
+            return False
+        step = self._step()
+        gaps = [(self.points[i + 1][0] - self.points[i][0], i) for i in range(len(self.points) - 1)]
+        i = self.selected
+        if i is not None and gaps:
+            gap_index = min(i, len(gaps) - 1)
+            if gaps[gap_index][0] >= 2 * step:
+                return self._insert_in_gap(gap_index)
+        wide = [g for g in gaps if g[0] >= 2 * step]
+        if wide:
+            return self._insert_in_gap(max(wide)[1])
+        lo, hi = self.x_range                              # no room between points: extend past the last one
+        x = round(self.points[-1][0] + max(step, (hi - lo) / 20), 1)
+        if x > hi:
+            return False
+        self.points.append([x, self.points[-1][1]])
+        self.select(len(self.points) - 1)
+        self._emit()
+        return True
+
+    def _insert_in_gap(self, i: int) -> bool:
+        x = round((self.points[i][0] + self.points[i + 1][0]) / 2, 1)
+        y = round(interpolate(self.points, x), 1)
+        self.points.insert(i + 1, [x, y])
+        self.select(i + 1)
+        self._emit()
+        return True
+
+    def remove_point(self) -> bool:
+        """Remove the selected point, or the one whose removal changes the curve least."""
+        if len(self.points) <= self.MIN_POINTS:
+            return False
+        i = self.selected
+        if i is None:
+            def bend(k: int) -> float:
+                (x0, y0), (x1, y1), (x2, y2) = self.points[k - 1], self.points[k], self.points[k + 1]
+                return abs(y0 + (y2 - y0) * (x1 - x0) / (x2 - x0) - y1) if x2 != x0 else 0.0
+            inner = range(1, len(self.points) - 1)
+            i = min(inner, key=bend) if len(self.points) > 2 else len(self.points) - 1
+        del self.points[i]
+        self.select(None)
+        self._emit()
+        return True
+
+    def set_point_count(self, n: int) -> None:
+        n = max(self.MIN_POINTS, min(self.MAX_POINTS, int(n)))
+        keep = self.selected
+        while len(self.points) < n:
+            self.selected = None
+            if not self.add_point():
+                break
+        while len(self.points) > n:
+            self.selected = None
+            if not self.remove_point():
+                break
+        if keep is not None and keep < len(self.points):
+            self.select(keep)
 
     def set_live(self, x: float | None, y: float | None) -> None:
         self.live_x, self.live_y = x, y
@@ -201,12 +273,12 @@ class CurveEditor(QWidget):
         pos = event.position()
         hit = self._hit(pos)
         if event.button() == Qt.RightButton:
-            if hit is not None and len(self.points) > 2:
+            if hit is not None and len(self.points) > self.MIN_POINTS:
                 del self.points[hit]
-                self.selected = None
+                self.select(None)
                 self._emit()
             return
-        self.selected = hit
+        self.select(hit)
         self._drag = hit
         self.update()
 
@@ -219,7 +291,7 @@ class CurveEditor(QWidget):
             return
         self.points.append([round(x, 1), round(y)])
         self.points.sort()
-        self.selected = self.points.index([round(x, 1), round(y)])
+        self.select(self.points.index([round(x, 1), round(y)]))
         self._emit()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
@@ -240,13 +312,16 @@ class CurveEditor(QWidget):
             self._emit()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        if key in (Qt.Key_Insert, Qt.Key_Plus):
+            self.add_point()
+            return
         i = self.selected
         if i is None:
             return super().keyPressEvent(event)
-        key = event.key()
-        if key in (Qt.Key_Delete, Qt.Key_Backspace) and len(self.points) > 2:
+        if key in (Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_Minus) and len(self.points) > self.MIN_POINTS:
             del self.points[i]
-            self.selected = None
+            self.select(None)
             self._emit()
             return
         dx = {Qt.Key_Left: -self._step(), Qt.Key_Right: self._step()}.get(key, 0.0)

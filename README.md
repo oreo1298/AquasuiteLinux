@@ -36,9 +36,10 @@ aquastream XT, poweradjust 3, high flow USB and mps flow.
 - Optional smoothing, and virtual sensors can use other virtual sensors.
 
 **Fan control**
-- **Curve controller** drawn on a graph: drag points, double-click to add one, right-click to remove
-  it, arrow keys to fine-tune, a table for exact values, presets and hysteresis. A live marker shows
-  where the input is right now and what the curve outputs.
+- **Curve controller** drawn on a graph with **2 to 16 points**: set how many with − / + (new points land
+  on the curve, so its shape stays until you move them), drag points, double-click to add one where you
+  want it, right-click to remove it, arrow keys to fine-tune, a table for exact values, presets and
+  hysteresis. A live marker shows where the input is right now and what the curve outputs.
 - **Target value controller (PID)**, **two-point controller**, **fixed power**, **follow another
   output**, and **combine** (the highest, lowest or average of other controllers, e.g. "the higher of
   the Delta T curve and the CPU curve").

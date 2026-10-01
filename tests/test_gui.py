@@ -204,6 +204,49 @@ def test_curve_editor_interaction(qapp):
     assert len(ed.points) == 2
 
 
+def test_curve_points_can_be_added_without_changing_the_shape(qapp):
+    from aquasuitelinux.core.config import DELTA_T_CURVE
+    from aquasuitelinux.core.controllers import interpolate
+    from aquasuitelinux.gui.curve_editor import CurveEditor
+    ed = CurveEditor()
+    original = [list(p) for p in DELTA_T_CURVE]                 # 5 points
+    ed.set_curve(original, "K")
+    ed.set_point_count(10)
+    assert len(ed.points) == 10
+    assert all(p in ed.points for p in original)                # the points you set stay where they are
+    for x in (2, 3.3, 5, 7.9, 10):
+        assert abs(interpolate(ed.points, x) - interpolate(original, x)) <= 0.1
+    assert [p[0] for p in ed.points] == sorted(p[0] for p in ed.points)
+    ed.set_point_count(40)
+    assert len(ed.points) == CurveEditor.MAX_POINTS == 16
+    ed.set_point_count(1)
+    assert len(ed.points) == CurveEditor.MIN_POINTS == 2
+    # with a point selected, a new one goes right after it, and removing takes the selected one
+    ed.set_curve(original, "K")
+    ed.select(1)
+    assert ed.add_point() and ed.points[2] == [5.0, 37.5] and ed.selected == 2
+    ed.select(0)
+    assert ed.remove_point() and ed.points[0] == [4.0, 30.0]
+
+
+def test_controllers_page_sets_ten_points(qapp, window):
+    window.open_controller("radiator")
+    pump(qapp, 0.8)
+    cp = window.controllers
+    assert cp.point_count.value() == 5 and cp.table.rowCount() == 5
+    cp.point_count.setValue(10)
+    assert len(cp.curve.points) == 10 and cp.table.rowCount() == 10 and cp.dirty
+    cp.table.setCurrentCell(3, 0)
+    assert cp.curve.selected == 3                                # table row ↔ point on the graph
+    cp.btn_add_point.click()
+    assert cp.point_count.value() == 11 and cp.curve.selected == 4
+    cp.btn_remove_point.click()
+    assert cp.point_count.value() == 10
+    cp.apply()
+    pump(qapp, 1.5)
+    assert len(window.bridge.config.controller("radiator").points) == 10
+
+
 def test_themes_and_icons(qapp):
     from aquasuitelinux.gui import icons
     from aquasuitelinux.gui.theme import theme

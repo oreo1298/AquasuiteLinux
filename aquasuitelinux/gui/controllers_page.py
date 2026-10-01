@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -203,10 +204,28 @@ class ControllersPage(QWidget):
                              "which stops fans pulsing around a curve point.")
         self.hyst.valueChanged.connect(self._touch)
         side.addWidget(self.hyst)
+        prow = QHBoxLayout()
         tl = QLabel("POINTS")
         tl.setObjectName("CardTitle")
         tl.setFont(scaled_font(tl, 0.78, bold=True))
-        side.addWidget(tl)
+        prow.addWidget(tl)
+        prow.addStretch(1)
+        self.point_count = QSpinBox()
+        self.point_count.setRange(CurveEditor.MIN_POINTS, CurveEditor.MAX_POINTS)
+        self.point_count.setToolTip(f"How many points the curve has ({CurveEditor.MIN_POINTS}–"
+                                    f"{CurveEditor.MAX_POINTS}). New points are placed on the curve, so its shape "
+                                    "stays the same until you drag them.")
+        self.point_count.valueChanged.connect(self._point_count_changed)
+        self.point_count.setAlignment(Qt.AlignCenter)
+        self.point_count.setFixedWidth(52)
+        self.btn_remove_point = flat_button("minus", "Remove the selected point (or the one that matters least)")
+        self.btn_remove_point.clicked.connect(lambda: self.curve.remove_point())
+        self.btn_add_point = flat_button("plus", "Add a point after the selected one (or in the widest gap)")
+        self.btn_add_point.clicked.connect(lambda: self.curve.add_point())
+        prow.addWidget(self.btn_remove_point)
+        prow.addWidget(self.point_count)
+        prow.addWidget(self.btn_add_point)
+        side.addLayout(prow)
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["Input", "Power %"])
         self.table.verticalHeader().setVisible(False)
@@ -214,7 +233,14 @@ class ControllersPage(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setMinimumWidth(170)
         self.table.itemChanged.connect(self._table_changed)
+        self.table.currentCellChanged.connect(lambda row, _c, _pr, _pc: self.curve.select(row if row >= 0 else None))
+        self.curve.selection_changed.connect(self._point_selected)
         side.addWidget(self.table, 1)
+        hint = QLabel("Double-click the graph to add a point, right-click one to remove it.")
+        hint.setObjectName("Faint")
+        hint.setWordWrap(True)
+        hint.setFont(scaled_font(hint, 0.85))
+        side.addWidget(hint)
         lay.addLayout(side)
         return w
 
@@ -464,6 +490,24 @@ class ControllersPage(QWidget):
                 it = QTableWidgetItem(v)
                 it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.table.setItem(i, col, it)
+        if self.curve.selected is not None:
+            self.table.setCurrentCell(self.curve.selected, 0)
+        self.table.blockSignals(False)
+        self.point_count.blockSignals(True)
+        self.point_count.setValue(len(points))
+        self.point_count.blockSignals(False)
+
+    def _point_count_changed(self, n: int) -> None:
+        self.curve.set_point_count(n)            # emits changed → table, dirty state
+        if len(self.curve.points) != n:          # no room for more points: show what the curve really has
+            self._fill_table(self.curve.points)
+
+    def _point_selected(self, index) -> None:
+        self.table.blockSignals(True)
+        if index is None:
+            self.table.clearSelection()
+        else:
+            self.table.setCurrentCell(index, 0)
         self.table.blockSignals(False)
 
     def _table_changed(self, _item) -> None:
