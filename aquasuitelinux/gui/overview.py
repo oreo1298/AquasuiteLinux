@@ -91,7 +91,8 @@ class DeviceRow(QWidget):
         pal = theme.palette
         name = info.get("name") or info.get("model")
         self.name.setText(name)
-        backend = {"hidraw": "USB", "hwmon": "kernel driver", "simulated": "demo"}.get(info["backend"], info["backend"])
+        backend = {"hidraw": "USB", "hwmon": "kernel driver", "kernel": "Linux driver",
+                   "simulated": "demo"}.get(info["backend"], info["backend"])
         parts = [info["model"]] if info["model"] != name else []
         if info.get("serial"):
             parts.append(info["serial"])

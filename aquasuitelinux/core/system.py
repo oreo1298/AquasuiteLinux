@@ -19,7 +19,7 @@ import threading
 import time
 from pathlib import Path
 
-from .devices import HWMON_NAMES
+from .devices import FAN_CONTROLLER_HWMON, HWMON_NAMES
 from .model import Reading
 
 HWMON_ROOT = Path("/sys/class/hwmon")
@@ -111,7 +111,7 @@ class SystemSensors:
         chips: list[tuple[str, str, Path, str]] = []
         skipped: list[str] = []
         seen: dict[str, int] = {}
-        aqua = set(HWMON_NAMES)
+        aqua = set(HWMON_NAMES) | set(FAN_CONTROLLER_HWMON)
         if self.root.is_dir():
             for d in sorted(self.root.iterdir(), key=lambda p: int(re.sub(r"\D", "", p.name) or 0)):
                 name = _read(d / "name") or d.name

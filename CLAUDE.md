@@ -50,6 +50,12 @@ Arch Linux (the user runs a QUADRO).
 - Software placement neutralises the device's min/max (0 / 100 %) because scaling is done in software;
   device placement writes the output's min/max/fallback/flags.
 - Unmanaged outputs (no controller) must never be written.
+- ARCTIC Fan Controller (`core/arctic.py`, spec `ARCTIC_FAN`, only in `BY_KIND`: its PID 0xF001 is the
+  aquaero's): only through the Linux 7.2+ `arctic_fan` hwmon driver (no hidraw node). Every `pwmN` write
+  sends all 10 channels from the driver's cache (0 after load/resume), so unassigned channels are set to the
+  device's 40 % default before the first write — the one exception to "never write unmanaged outputs".
+  Writes run on a background thread (each blocks ≤ 1 s for the device's ACK); resume is detected from the
+  cleared cache and everything is re-sent. Software placement only.
 - PC sensors (`system.py`) never read network hardware — Ethernet/Wi-Fi adapters and Ethernet PHYs
   (`is_network_hardware`): polling a NIC/PHY temperature every second broke a user's Ethernet.
 - Safety nets for untested hardware behaviour: `MAX_REWRITES` (a device that doesn't keep our settings

@@ -415,7 +415,8 @@ class DeviceDialog(QDialog):
         form.addRow("Name", self.name)
         lay.addLayout(form)
         grid = KeyValueGrid(2)
-        backend = {"hidraw": "USB (hidraw)", "hwmon": "kernel driver (hwmon)", "simulated": "simulated"}
+        backend = {"hidraw": "USB (hidraw)", "hwmon": "kernel driver (hwmon)", "kernel": "its Linux driver (hwmon)",
+                   "simulated": "simulated"}
         grid.add_row("Model", info.get("model", "—"))
         grid.add_row("Serial", info.get("serial") or "—")
         grid.add_row("Firmware", str(info.get("firmware") or "—"))

@@ -110,6 +110,7 @@ When it can't open them (no udev rule yet, see below) it falls back to the Linux
 | **aquastream XT** | ✔ temperatures, pump and fan speed | ✔ pump and fan (software) | — | — |
 | **poweradjust 3** | ✔ temperatures, fan, flow | — | — | — |
 | **high flow USB / mps flow** | ✔ temperatures, flow | — | — | — |
+| **ARCTIC Fan Controller** ³ | ✔ 10 fan speeds | ✔ 10 fans (software) | — | — |
 
 Software sensor feeds and the LEAKSHIELD feed are **experimental and off by default** (Settings → *Send
 sensor values to devices*, or `aquactl feeds on`): they use the devices' vendor USB bulk endpoint, which
@@ -119,6 +120,12 @@ works on every device. `aquactl doctor --feed-test` tells you whether your devic
 ¹ The layout is the QUADRO's; AquasuiteLinux checks that the device reports the values back and, if it
 doesn't, controls those outputs in software instead and tells you.
 ² Gives the LEAKSHIELD the pump speed and flow it needs for its pressure model, as aquasuite does.
+
+³ Not an Aquacomputer device: it works through its own Linux driver (`arctic_fan`, **Linux 7.2 or newer**),
+and setting fan speeds needs root, so use the background service. It has no curves of its own, so its fans
+run your controllers (Delta T curves included) in software. Because every speed change sends all ten
+channels, fans you don't assign are held at 40 %, the speed the controller gives them before it gets any
+command. After a suspend the controller forgets its speeds, and AquasuiteLinux sets them again.
 
 RGB lighting (RGBpx, farbwerk effects) is not supported: that part of the protocol isn't documented.
 

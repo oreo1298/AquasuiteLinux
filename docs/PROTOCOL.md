@@ -133,6 +133,16 @@ don't come back, those outputs are controlled in software instead.
 Pump speed (`u16` at 1, unit byte 0x03 at 33) and flow (`u16` dL/h at 3, unit byte 0x0C at 34); the other
 slots are `0x7FFF`. The CRC-16/USB covers bytes 0 … 48 and is stored at 49.
 
+## ARCTIC Fan Controller (vendor 3904, product f001)
+
+Not an Aquacomputer device; AquasuiteLinux drives it only through the Linux `arctic_fan` driver (Linux
+7.2+), which offers `fan1..10_input` and `pwm1..10` (0–255). From the driver: the device sends report 0x01
+(32 bytes) about once a second — bytes 1–10 the duty of each channel (0–100 %), bytes 11–30 ten
+little-endian `u16` speeds; output report 0x01 (32 bytes) sets all ten duties (0–100 %) at once; the device
+answers each with report 0x02 (`02 00` = applied) within about 0.6 s. It has no GET_REPORT, so the driver
+can't read the duties back: its cache starts at 0 and is cleared on resume. The controller runs every fan at
+40 % until its first command and never changes a duty by itself.
+
 ## aquaero control
 
 A fan is switched to manual power by pointing its control source (fan control + 0x10) at its power preset

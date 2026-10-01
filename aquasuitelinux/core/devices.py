@@ -373,12 +373,23 @@ HIGHFLOW = DeviceSpec(
     notes="USB flow meter with two temperature sensors.",
 )
 
+# Not an Aquacomputer device: reached only through the Linux arctic_fan driver (see arctic.py).
+ARCTIC_FAN = DeviceSpec(
+    kind="arcticfan", name="ARCTIC Fan Controller", product_id=0xF001, family="arctic",
+    serial_offset=None, firmware_offset=None,
+    fans=tuple(FanSpec(f"fan{i}", f"Fan {i}", status=None) for i in range(1, 11)),
+    notes="10-channel PWM fan controller (Linux 7.2+, arctic_fan driver). It has no curves of its own, so its "
+          "fans are controlled in software.",
+)
+
+# Aquacomputer devices (USB vendor 0c70) by product ID. ARCTIC's product ID (on vendor 3904) is
+# the aquaero's, which is why it is only in BY_KIND.
 ALL_SPECS: tuple[DeviceSpec, ...] = (
     QUADRO, OCTO, D5NEXT, FARBWERK360, FARBWERK, HIGHFLOWNEXT, LEAKSHIELD, AQUASTREAMULT,
     AQUAERO, AQUASTREAMXT, POWERADJUST3, HIGHFLOW,
 )
 BY_PRODUCT = {s.product_id: s for s in ALL_SPECS}
-BY_KIND = {s.kind: s for s in ALL_SPECS}
+BY_KIND = {s.kind: s for s in (*ALL_SPECS, ARCTIC_FAN)}
 
 # hwmon "name" attribute of the aquacomputer_d5next driver for each device kind
 HWMON_NAMES = {
@@ -387,6 +398,8 @@ HWMON_NAMES = {
     "aquastreamxt": "aquastreamxt", "aquaero": "aquaero", "aquastreamultimate": "aquastreamult",
     "poweradjust3": "poweradjust3", "highflow": "highflow",
 }
+# hwmon chips of other fan controllers this app drives (their sensors aren't "PC sensors")
+FAN_CONTROLLER_HWMON = {"arctic_fan": "arcticfan"}
 
 
 def status_span(spec: DeviceSpec) -> int:

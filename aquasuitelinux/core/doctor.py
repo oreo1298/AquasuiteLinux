@@ -222,9 +222,11 @@ class Doctor:
 
     def hardware(self) -> list[tuple[HidNode, DeviceSpec]]:
         self.head("Devices")
+        others = self.fan_controllers()
         nodes = enumerate_nodes(VENDOR_ID, self.hidraw_root)
         if not nodes:
-            self.finding("no Aquacomputer device found (is the USB cable plugged into a USB header?)")
+            if not others:
+                self.finding("no Aquacomputer device found (is the USB cable plugged into a USB header?)")
             return []
         known: list[tuple[HidNode, DeviceSpec]] = []
         seen_usb: set[str] = set()
@@ -259,6 +261,22 @@ class Doctor:
                 mode, channel = self.channel_for(n)
                 self.line(f"software sensor data would go to: {channel.describe() if channel else mode}", 2)
         return known
+
+    def fan_controllers(self) -> int:
+        """Other fan controllers with their own Linux driver (ARCTIC Fan Controller)."""
+        from .arctic import arctic_devices
+        from .system import HWMON_ROOT
+        devs = arctic_devices(self.hwmon_root or HWMON_ROOT)
+        for dev in devs:
+            rpm = [r.value for r in dev.poll() if r.id.endswith(".rpm")]
+            writable = "yes" if dev._writable() else "no (root only: the background service can)"
+            self.line(f"{dev.spec.name} {dev.serial or ''} at {dev.dir} (Linux driver arctic_fan): "
+                      f"fans {', '.join('—' if v is None else f'{v:.0f}' for v in rpm)} rpm; can set speeds: {writable}")
+        stray = enumerate_nodes(0x3904, self.hidraw_root)
+        if stray and not devs:
+            self.finding("an ARCTIC Fan Controller is plugged in, but its Linux driver (arctic_fan) isn't loaded: "
+                         "it needs Linux 7.2 or newer")
+        return len(devs)
 
     def live(self, node: HidNode, spec: DeviceSpec, api) -> None:
         self.head(f"{spec.name} at {node.path}: live data")

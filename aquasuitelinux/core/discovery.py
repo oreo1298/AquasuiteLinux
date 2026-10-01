@@ -6,7 +6,8 @@ import logging
 import os
 from pathlib import Path
 
-from .device import HidDevice, HwmonDevice, hwmon_devices
+from .arctic import arctic_devices
+from .device import HWMON_ROOT, HidDevice, HwmonDevice, hwmon_devices
 from .devices import BY_PRODUCT, VENDOR_ID, DeviceSpec, status_span
 from .engine import DeviceProvider
 from .errors import DeviceError, PermissionDenied
@@ -109,6 +110,10 @@ class HardwareProvider(DeviceProvider):
                     # its hidraw node exists and is usable (or will be retried); don't duplicate it
                     continue
                 found.append(hw)
+        # other fan controllers with their own Linux driver (ARCTIC Fan Controller, Linux 7.2+)
+        for dev in arctic_devices(self.hwmon_root or HWMON_ROOT):
+            if dev.path not in open_paths:
+                found.append(dev)
         return found, problems
 
     def system_sensors(self):
