@@ -80,6 +80,16 @@ def test_output_settings_apply(qapp, window):
     assert window.bridge.config.outputs[f"{QUADRO}/fan4"].min_power == 35
 
 
+def test_fans_page_explains_the_power_range(qapp, window):
+    from aquasuitelinux.core.demo import QUADRO
+    window.open_output(f"{QUADRO}/fan1")
+    pump(qapp, 1.5)
+    o = window.bridge.outputs[f"{QUADRO}/fan1"]
+    # the demo's radiator fans have a 20 % minimum: the curve's value is spread over 20–100 %
+    assert o["target"] == round(20 + o["curve"] * 0.8, 1)
+    assert "spread over 20–100 %" in window.outputs.live.text()
+
+
 def test_dialogs_build(qapp, window):
     from aquasuitelinux.core.demo import QUADRO
     from aquasuitelinux.gui import dialogs

@@ -200,8 +200,10 @@ class OutputsPage(QWidget):
         ramps.addStretch(1)
         self.ramp_label = QLabel("Speed changes")
         lf.addRow(self.ramp_label, ramps)
-        note = QLabel("The controller's 0-100 % is spread between the minimum and maximum power. The fallback power "
-                      "is used when the input sensor is unavailable. Speed changes only apply in software control.")
+        note = QLabel("The controller's 0–100 % is spread between minimum and maximum power, as on Aquacomputer "
+                      "devices: with a 5 % minimum a curve's 40 % becomes 43 % (set 0 % to use the curve's values as "
+                      "they are). Fallback power is used when the input is unavailable; speed changes only apply in "
+                      "software control.")
         note.setObjectName("Faint")
         note.setWordWrap(True)
         lf.addRow(note)
@@ -433,6 +435,10 @@ class OutputsPage(QWidget):
         rpm = format_value(o.get("rpm"), "rpm")
         power = o.get("reported") if o.get("reported") is not None else o.get("target")
         target = f"  (target {format_value(o.get('target'), '%')})" if o.get("target") is not None else ""
+        curve, tgt = o.get("curve"), o.get("target")
+        if curve is not None and tgt is not None and abs(curve - tgt) >= 0.5:
+            target = (f"  (target {format_value(tgt, '%')}: the controller's {format_value(curve, '%')} "
+                      f"spread over {o.get('min_power', 0):g}–{o.get('max_power', 100):g} %)")
         self.live.setText(f"Now {rpm}  ·  {format_value(power, '%')}{target}")
 
     def _snapshot(self, snap: dict) -> None:

@@ -1016,6 +1016,11 @@ class Engine:
                     "reason": plan.reason if plan else "",
                     "slot": plan.slot if plan else None,
                     "target": rt.target if rt else None,
+                    # what the controller asks for, before it is spread over the output's min-max range
+                    "curve": (round(ctrl_values[cid], 1) if plan and plan.placement != "unmanaged" and cid
+                              and plan.follow_index is None and ctrl_values.get(cid) is not None else None),
+                    "min_power": (oc or OutputConfig()).min_power,
+                    "max_power": (oc or OutputConfig()).max_power,
                     "reported": reported.value if reported else None,
                     "rpm": rpm.value if rpm else None,
                     "override": oid in self.overrides,
