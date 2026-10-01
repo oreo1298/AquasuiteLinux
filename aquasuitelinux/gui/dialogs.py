@@ -649,7 +649,7 @@ class ImportDialog(QDialog):
         def got(data):
             spec = BY_KIND[data["kind"]]
             raw = base64.b64decode(data["raw"])
-            self._show_plan(aquasuite.plan_import(spec, raw, key))
+            self._show_plan(aquasuite.plan_import(spec, raw, key, data.get("names")))
 
         self.bridge.call("device_settings", key, done=got,
                          error=lambda e: self.notes.setText(f"Could not read the device: {e}"))
@@ -698,7 +698,7 @@ class ImportDialog(QDialog):
         key = self.target.currentData()
         connected = any(d["key"] == key for d in self.bridge.snap.get("devices", []))
         self.write_device.setEnabled(connected)
-        self._show_plan(aquasuite.plan_import(f.spec, f.data, key))
+        self._show_plan(aquasuite.plan_import(f.spec, f.data, key, f.names))
 
     def _show_plan(self, plan: aquasuite.ImportPlan) -> None:
         self.plan = plan
@@ -714,13 +714,20 @@ class ImportDialog(QDialog):
         while self.slots_form.rowCount():
             self.slots_form.removeRow(0)
         self.slot_combos.clear()
+        suggested = aquasuite.suggest_sources(plan, self.bridge.config, self.bridge.readings)
         for slot in plan.soft_slots:
             row = QHBoxLayout()
             combo = SensorCombo(kinds={"temperature", "delta", "percent", "power", "flow"},
                                 allow_none="Leave unassigned (runs at fallback power)")
             combo.set_readings(self.bridge.sensor_list({"temperature", "delta", "percent", "power", "flow"}))
+            want = suggested.get(slot)
+            if plan.delta_t:
+                text = plan.describe_source(aquasuite.NEW_DELTA_T)
+                combo.insertItem(1, text[:1].upper() + text[1:], aquasuite.NEW_DELTA_T)
             dts = [v for v in self.bridge.config.virtual_sensors if v.kind == "difference"]
-            if dts:
+            if want:
+                combo.setCurrentIndex(max(0, combo.findData(want)))
+            elif dts:
                 combo.set_current_id(f"virtual/{dts[0].id}")
             new = QPushButton("New Delta T…")
             new.clicked.connect(lambda _c=False, cb=combo: self._new_delta(cb))
@@ -728,9 +735,13 @@ class ImportDialog(QDialog):
             row.addWidget(new)
             w = QWidget()
             w.setLayout(row)
-            self.slots_form.addRow(f"Software sensor {slot} ←", w)
+            name = plan.slot_name(slot)
+            self.slots_form.addRow(f"Software sensor {slot}{f' “{name}”' if name else ''} ←", w)
             self.slot_combos[slot] = combo
         notes = list(plan.notes)
+        if plan.sensor_names():
+            notes.append("Sensor names from aquasuite: " + ", ".join(
+                f"{k} “{v}”" for k, v in plan.sensor_names().items()))
         if plan.temp_offsets and any(plan.temp_offsets):
             notes.append("Sensor offsets on the device: " + ", ".join(f"{v:+.2f} K" for v in plan.temp_offsets))
         if plan.flow_pulses:

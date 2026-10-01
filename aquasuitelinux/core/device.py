@@ -71,6 +71,9 @@ class BaseDevice:
     def write_control(self, data: bytes) -> None:
         raise NotSupported("settings are not accessible with this backend")
 
+    def read_names(self) -> bytes:
+        raise NotSupported("names are not accessible with this backend")
+
     def push_soft_sensors(self, values: list[tuple[float, int] | None]) -> None:
         raise NotSupported("software sensors are not accessible with this backend")
 
@@ -211,6 +214,14 @@ class HidDevice(BaseDevice):
             self.writes += 1
             self._ctrl, self._ctrl_time = bytes(buf), time.monotonic()
         log.info("%s: wrote settings (%d writes this session)", self.key, self.writes)
+
+    def read_names(self) -> bytes:
+        """The name table (feature report 0x08): the names given to sensors and fans in aquasuite."""
+        from .aquasuite import NAME_LAYOUTS, NAME_REPORT_ID, NAME_REPORT_LENGTH
+        if self.spec.kind not in NAME_LAYOUTS:
+            raise NotSupported(f"the {self.spec.name}'s name table isn't known")
+        with self.lock:
+            return self.transport.get_feature(NAME_REPORT_ID, NAME_REPORT_LENGTH)
 
     def set_manual(self, powers: dict[str, float]) -> None:
         """Set several outputs to fixed powers with one settings write."""

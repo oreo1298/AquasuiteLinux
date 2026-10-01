@@ -245,14 +245,20 @@ and click **Import**.
 
 **Software sensors.** If a curve reads an aquasuite *software sensor* (aquasuite's way of giving the
 device a Delta T or the CPU temperature), the import shows *Software sensor N ←* with a sensor picker.
-Choose the matching Linux sensor, or click **New Delta T…** to create it right there. AquasuiteLinux
-then streams that value into the same slot every second, so the curve on the device behaves exactly as
-it did under Windows.
+The device also keeps the names you gave things in aquasuite, so when software sensor 1 is called
+"Delta T" and your sensors "Water Temp" and "Ambient", the import offers a new Delta T (Water Temp −
+Ambient) for it by itself; a "CPU …" or "GPU …" software sensor gets the PC's matching sensor. Your
+sensor names come along too. Change any choice, or click **New Delta T…**. The curve then reads that
+sensor directly (in software, or on the device with *Send sensor values to devices* on).
 
 **Outputs in manual mode** are imported unticked: aquasuite often drives those from the PC, so their
 stored power is just the last value it set.
 
-**From a file.** aquasuite's own files (`C:\ProgramData\aquasuite-data`, profile exports in
+**From an aquasuite backup.** aquasuite's *Backup* on a device page saves an XML file
+(`<DeviceBackup>`) with the device's settings and names; *Import → From a file* (or `aquactl import --file
+backup.xml`) reads both, exactly like reading the device.
+
+**From other files.** aquasuite's own files (`C:\ProgramData\aquasuite-data`, profile exports in
 `Documents\aquasuite`) use a private, undocumented format. *Import → From a file* searches any file you
 give it (binary, XML, JSON, zip, gzip, text with hex or base64 blocks) for complete device settings and
 only accepts blocks whose CRC-16 checksum matches, so a match is exact and never a guess. If your file

@@ -14,6 +14,11 @@ What the device can't know is what fed its *software sensors*: an aquasuite Delt
 temperature arrives over USB. Curves that use a software sensor are imported with that
 slot noted, so you can point it at the matching Linux sensor (for example a Delta T
 virtual sensor) and AquasuiteLinux keeps feeding the same slot.
+
+aquasuite's device backups (``<DeviceBackup>`` XML: *Backup* on the device page) also hold the
+device's name table (feature report 0x08) with the names given in aquasuite — "Water Temp",
+"Ambient", a software sensor called "Delta T". Those names label the imported sensors and let the
+import set up the matching Linux sensors by itself (``suggest_sources``).
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ import zipfile
 from dataclasses import dataclass, field
 
 from . import control
-from .config import Config, ControllerConfig, FeedConfig, OutputConfig, new_id
+from .config import Config, ControllerConfig, FeedConfig, OutputConfig, VirtualSensorConfig, new_id
 from .crc import is_sealed
 from .devices import ALL_SPECS, BY_KIND, DeviceSpec
 from .errors import AquaError
@@ -57,12 +62,47 @@ def backup_bytes(backup: dict, spec: DeviceSpec) -> bytes:
 
 
 # ---------------------------------------------------------------------- finding settings in files
+# ---------------------------------------------------------------------- names (feature report 0x08)
+NAME_REPORT_ID = 0x08
+NAME_REPORT_LENGTH = 1013           # QUADRO and OCTO (from their HID report descriptors)
+NAME_SIZE = 24                      # NUL-padded Latin-1, after a 3-byte header; CRC-16 at the end
+# First slot and count of each group. QUADRO: from an aquasuite backup of a real QUADRO
+# (fans 0-3, LED controllers 8-15, flow 16, sensors 17-20, software sensors 24-39). OCTO: from
+# aqdctl's captures (fans 0x003, sensors 0x1E3, flow 0x243, software sensors 0x273).
+NAME_LAYOUTS: dict[str, dict[str, tuple[int, int]]] = {
+    "quadro": {"fan": (0, 4), "flow": (16, 1), "temp": (17, 4), "virt": (24, 16)},
+    "octo": {"fan": (0, 8), "temp": (20, 4), "flow": (24, 1), "virt": (26, 16)},
+}
+_DEFAULT_NAME = re.compile(r"^(fan|sensor|soft\.? ?sensor|software sensor|flow|temperature|temp)\s*\d*$", re.I)
+
+
+def parse_names(kind: str, data: bytes) -> dict[str, str]:
+    """Sensor key → name from a device's name report (``{"temp1": "Water Temp", "virt1": "Delta T"}``)."""
+    layout = NAME_LAYOUTS.get(kind)
+    if not layout or not data or data[0] != NAME_REPORT_ID or not is_sealed(data):
+        return {}
+    out: dict[str, str] = {}
+    for group, (first, count) in layout.items():
+        for i in range(count):
+            off = 3 + (first + i) * NAME_SIZE
+            name = data[off:off + NAME_SIZE].split(b"\0")[0].decode("latin-1", "replace").strip()
+            if name:
+                out[group if group == "flow" else f"{group}{i + 1}"] = name
+    return out
+
+
+def custom_name(name: str) -> bool:
+    """A name someone chose, not the device's default ("Fan 1", "Sensor 3", "Soft. Sensor 6")."""
+    return bool(name) and not _DEFAULT_NAME.match(name.strip())
+
+
 @dataclass
 class FoundSettings:
     spec: DeviceSpec
     data: bytes
     origin: str
     serial: str = ""
+    names: dict[str, str] = field(default_factory=dict)
 
     @property
     def summary(self) -> str:
@@ -137,11 +177,45 @@ def _text_blocks(blob: bytes) -> list[tuple[str, bytes]]:
     return out
 
 
+_XML_ITEM_RE = re.compile(rb"<DeviceDataItem>\s*<Name>([^<]*)</Name>\s*<Data>([^<]*)</Data>", re.S)
+
+
+def _xml_field(blob: bytes, tag: str) -> str:
+    m = re.search(rb"<" + tag.encode() + rb">([^<]*)</" + tag.encode() + rb">", blob)
+    return m.group(1).decode("utf-8", "replace").strip() if m else ""
+
+
+def device_backup(blob: bytes, label: str = "file") -> list[FoundSettings]:
+    """An aquasuite device backup (``<DeviceBackup>`` XML): the settings report plus the names."""
+    if b"<DeviceBackup" not in blob[:4096]:
+        return []
+    items: dict[str, bytes] = {}
+    for m in _XML_ITEM_RE.finditer(blob):
+        try:
+            items[m.group(1).decode("utf-8", "replace").strip()] = base64.b64decode(re.sub(rb"\s", b"", m.group(2)))
+        except (binascii.Error, ValueError):
+            continue
+    serial = _xml_field(blob, "DeviceSerial")
+    kind = _xml_field(blob, "DeviceType").lower()
+    found: list[FoundSettings] = []
+    for f in scan_binary(items.get("settings", b"")):
+        if kind and kind in BY_KIND and f.spec.kind != kind:
+            continue
+        names = parse_names(f.spec.kind, items.get("flash", b""))
+        when = _xml_field(blob, "Time")[:10]
+        origin = f"{label} (aquasuite backup of {f.spec.name} {serial}{', ' + when if when else ''})"
+        found.append(FoundSettings(f.spec, f.data, origin, serial, names))
+    return found
+
+
 def find_settings(blob: bytes, name: str = "", depth: int = 0) -> list[FoundSettings]:
     """Every device settings report inside ``blob`` (any file format), CRC-verified."""
     if len(blob) > MAX_SCAN_BYTES:
         blob = blob[:MAX_SCAN_BYTES]
     label = name or "file"
+    backup = device_backup(blob, label)
+    if backup:
+        return backup
     # our own backup format
     stripped = blob.lstrip()
     if stripped[:1] == b"{":
@@ -181,7 +255,7 @@ def find_settings(blob: bytes, name: str = "", depth: int = 0) -> list[FoundSett
 MODE_NAMES = {0: "Manual", 1: "Target temperature (PID)", 2: "Curve"}
 
 
-def describe_mode(spec: DeviceSpec, fan: dict) -> str:
+def describe_mode(spec: DeviceSpec, fan: dict, names: dict[str, str] | None = None) -> str:
     mode = fan["mode"]
     if mode == 0:
         return f"{fan['label']}: manual {fan['pwm']:.0f} %"
@@ -189,6 +263,9 @@ def describe_mode(spec: DeviceSpec, fan: dict) -> str:
         src = fan["source"]
         key = control.source_key(spec, src) if src is not None else None
         name = _sensor_label(spec, key) if key else "no sensor"
+        given = (names or {}).get(key or "", "")
+        if custom_name(given):
+            name += f" “{given}”"
         return f"{fan['label']}: {'target temperature' if mode == 1 else 'curve'} on {name}"
     other = mode - control.MODE_FOLLOW
     label = spec.fans[other].label if 0 <= other < len(spec.fans) else f"fan {other + 1}"
@@ -215,6 +292,17 @@ class ImportItem:
     selected: bool = True
 
 
+NEW_DELTA_T = "+deltat"         # slot_map value: create a Delta T from the device's coolant and air sensors
+_DELTA_RE = re.compile(r"delta|Δ|\bd ?t\b|diff", re.I)
+_COOLANT_RE = re.compile(r"water|coolant|liquid|loop|fluid|wasser|kühl|kuehl|in ?let|out ?let", re.I)
+_AIR_RE = re.compile(r"ambient|air|room|luft|umgebung|raum", re.I)
+# preferred PC sensors for software sensors named after the CPU or GPU, best first
+_CPU_IDS = ("system/k10temp/tctl", "system/k10temp/tdie", "system/zenpower/tdie", "system/zenpower/tctl",
+            "system/coretemp/package_id_0")
+_GPU_IDS = {"hot": ("system/amdgpu/junction", "system/nvidia0/gpu", "system/amdgpu/edge"),
+            "core": ("system/amdgpu/edge", "system/nvidia0/gpu", "system/amdgpu/junction")}
+
+
 @dataclass
 class ImportPlan:
     device_key: str
@@ -223,16 +311,39 @@ class ImportPlan:
     temp_offsets: list[float] = field(default_factory=list)
     flow_pulses: int | None = None
     notes: list[str] = field(default_factory=list)
+    names: dict[str, str] = field(default_factory=dict)          # sensor key → name given in aquasuite
+    delta_t: tuple[str, str] | None = None                       # (coolant, air) sensor keys, from the names
 
     @property
     def soft_slots(self) -> list[int]:
         return sorted({i.soft_slot for i in self.items if i.soft_slot is not None and i.selected})
 
+    def slot_name(self, slot: int) -> str:
+        name = self.names.get(f"virt{slot}", "")
+        return name if custom_name(name) else ""
 
-def plan_import(spec: DeviceSpec, data: bytes, device_key: str) -> ImportPlan:
+    def sensor_names(self) -> dict[str, str]:
+        """Names given in aquasuite to the device's own sensors (only the ones someone chose)."""
+        keys = {t.key for t in self.spec.temps} | {"flow"}
+        return {k: v for k, v in self.names.items() if k in keys and custom_name(v)}
+
+    def describe_source(self, source: str) -> str:
+        if source == NEW_DELTA_T and self.delta_t:
+            c, a = self.delta_t
+            return f"new Delta T: {self.names.get(c, c)} − {self.names.get(a, a)}"
+        return source or "nothing (the curve runs at fallback power)"
+
+
+def plan_import(spec: DeviceSpec, data: bytes, device_key: str, names: dict[str, str] | None = None) -> ImportPlan:
     """What an aquasuite-configured settings report means in AquasuiteLinux terms."""
     rep = control.ControlReport(spec, data)
-    plan = ImportPlan(device_key, spec, temp_offsets=rep.temp_offsets(), flow_pulses=rep.flow_pulses())
+    plan = ImportPlan(device_key, spec, temp_offsets=rep.temp_offsets(), flow_pulses=rep.flow_pulses(),
+                      names=dict(names or {}))
+    temp_names = {t.key: plan.names.get(t.key, "") for t in spec.temps}
+    coolant = [k for k, n in temp_names.items() if _COOLANT_RE.search(n)]
+    air = [k for k, n in temp_names.items() if _AIR_RE.search(n)]
+    if coolant and air and coolant[0] != air[0]:
+        plan.delta_t = (coolant[0], air[0])
     if not rep.valid:
         plan.notes.append("The settings checksum does not match; values may be damaged.")
     curves: dict[tuple, ControllerConfig] = {}
@@ -242,26 +353,29 @@ def plan_import(spec: DeviceSpec, data: bytes, device_key: str) -> ImportPlan:
         fc = rep.fan(i)
         st = rep.setup(i)
         oid = f"{device_key}/{f.key}"
-        oc = OutputConfig(name=f.label)
+        given = plan.names.get(f.key, "")
+        oc = OutputConfig(name=given if custom_name(given) else f.label)
         if st is not None:
             oc.min_power, oc.max_power = st.min_power / 100, st.max_power / 100
             oc.fallback, oc.hold_min, oc.start_boost = st.fallback / 100, st.hold_min, st.start_boost
         oc.placement = "auto"
         fan_dict = {"label": f.label, "mode": fc.mode, "pwm": fc.pwm / 100,
                     "source": None if fc.source == control.SOURCE_NONE else fc.source}
-        desc = describe_mode(spec, fan_dict)
+        desc = describe_mode(spec, fan_dict, plan.names)
         ctrl: ControllerConfig | None = None
         slot = None
         src_key = control.source_key(spec, fc.source)
         input_id = f"{device_key}/{src_key}" if src_key else ""
-        if src_key and src_key.startswith("virt"):
-            slot = int(src_key[4:])
+        if src_key and src_key.startswith("virt") and fc.mode in (control.MODE_CURVE, control.MODE_PID):
+            slot = int(src_key[4:])       # a follow or manual output keeps a stale input field: not read
         if fc.mode == control.MODE_CURVE:
             pts = _dedupe_points([[t / 100, p / 100] for t, p in zip(fc.curve_temps, fc.curve_powers)])
             sig = ("curve", input_id, tuple(map(tuple, pts)))
             ctrl = curves.get(sig)
             if ctrl is None:
-                name = f"{_sensor_label(spec, src_key) if src_key else 'Curve'} curve".capitalize()
+                given = plan.names.get(src_key or "", "")
+                label = given if custom_name(given) else _sensor_label(spec, src_key) if src_key else "Curve"
+                name = f"{label[:1].upper()}{label[1:]} curve"
                 ctrl = ControllerConfig(id=new_id(), name=name, kind="curve", input=input_id, points=pts)
                 curves[sig] = ctrl
         elif fc.mode == control.MODE_PID:
@@ -286,10 +400,47 @@ def plan_import(spec: DeviceSpec, data: bytes, device_key: str) -> ImportPlan:
             item.description += " (aquasuite may have been setting this from the PC)"
         plan.items.append(item)
     if plan.soft_slots:
-        slots = ", ".join(str(s) for s in plan.soft_slots)
+        slots = ", ".join(str(s) + (f" (“{plan.slot_name(s)}”)" if plan.slot_name(s) else "")
+                          for s in plan.soft_slots)
         plan.notes.append(f"Curves read software sensor {slots}. aquasuite filled it from the PC; choose which "
                           "Linux sensor should feed it (for example a Delta T).")
+    for item in plan.items:
+        c = item.controller
+        if (item.selected and c is not None and c.kind == "curve" and item.soft_slot is not None and c.points
+                and _DELTA_RE.search(plan.slot_name(item.soft_slot)) and min(p[0] for p in c.points) >= 15):
+            x0, y0 = min(c.points)
+            plan.notes.append(f"{item.label}: its curve starts at {x0:g}, which looks like a coolant temperature "
+                              f"rather than a Delta T (a few kelvin), so on the Delta T it would stay at {y0:g} %. "
+                              "Check the curve after importing.")
     return plan
+
+
+def suggest_sources(plan: ImportPlan, cfg: Config, readings: dict[str, object] | None = None) -> dict[int, str]:
+    """Linux sensors for the software sensors the imported curves read, from their aquasuite names.
+
+    A "Delta T" becomes an existing difference sensor over the same two sensors, or ``NEW_DELTA_T``
+    (``apply_import`` creates it); a "CPU …" or "GPU …" sensor becomes the PC's matching sensor.
+    """
+    readings = readings or {}
+    out: dict[int, str] = {}
+    for slot in plan.soft_slots:
+        name = plan.slot_name(slot)
+        if not name:
+            continue
+        if _DELTA_RE.search(name) and plan.delta_t:
+            inputs = [f"{plan.device_key}/{k}" for k in plan.delta_t]
+            same = next((v for v in cfg.virtual_sensors if v.kind == "difference" and v.inputs == inputs), None)
+            out[slot] = f"virtual/{same.id}" if same else NEW_DELTA_T
+        elif re.search(r"cpu", name, re.I):
+            sid = next((i for i in _CPU_IDS if i in readings), "")
+            if sid:
+                out[slot] = sid
+        elif re.search(r"gpu", name, re.I):
+            prefs = _GPU_IDS["hot" if re.search(r"hot|junction|package", name, re.I) else "core"]
+            sid = next((i for i in prefs if i in readings), "")
+            if sid:
+                out[slot] = sid
+    return out
 
 
 def _dedupe_points(points: list[list[float]]) -> list[list[float]]:
@@ -315,7 +466,20 @@ def _dedupe_points(points: list[list[float]]) -> list[list[float]]:
 def apply_import(cfg: Config, plan: ImportPlan, slot_map: dict[int, str] | None = None) -> Config:
     """Add the selected items to a copy of ``cfg``. ``slot_map`` maps software sensor slots to sensors."""
     cfg = cfg.copy()
-    slot_map = slot_map or {}
+    slot_map = dict(slot_map or {})
+    for slot, source in list(slot_map.items()):
+        if source == NEW_DELTA_T and slot_map[slot] == NEW_DELTA_T:
+            if not plan.delta_t:
+                raise AquaError("no coolant and air sensor known for a new Delta T; pick a sensor instead")
+            vs = VirtualSensorConfig(id=new_id(), name=plan.slot_name(slot) or "Delta T", kind="difference",
+                                     inputs=[f"{plan.device_key}/{k}" for k in plan.delta_t], smoothing=5.0)
+            cfg.virtual_sensors.append(vs)
+            for other in [s for s, src in slot_map.items() if src == NEW_DELTA_T]:
+                slot_map[other] = f"virtual/{vs.id}"          # one Delta T for every slot that asks for it
+    if plan.sensor_names():
+        names = cfg.device(plan.device_key).sensor_names
+        for key, name in plan.sensor_names().items():
+            names.setdefault(key, name)                          # never rename what the user named here
     added: dict[str, str] = {}
     for item in plan.items:
         if not item.selected:

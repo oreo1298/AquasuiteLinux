@@ -121,6 +121,27 @@ class SimFan:
         return self.max_rpm * (0.15 + 0.85 * self.out / 100)
 
 
+SIM_NAMES = {"temp1": "Water Temp", "temp2": "Ambient", "virt1": "Delta T"}   # as named in aquasuite
+
+
+def name_report(kind: str, names: dict[str, str]) -> bytearray | None:
+    """A device name table (feature report 0x08) holding ``names``, laid out like the real one."""
+    from .aquasuite import NAME_LAYOUTS, NAME_REPORT_ID, NAME_REPORT_LENGTH, NAME_SIZE
+    layout = NAME_LAYOUTS.get(kind)
+    if layout is None:
+        return None
+    buf = bytearray(NAME_REPORT_LENGTH)
+    buf[0], buf[2] = NAME_REPORT_ID, 0x03
+    for group, (first, count) in layout.items():
+        for i in range(count):
+            key = group if group == "flow" else f"{group}{i + 1}"
+            text = names.get(key) or (f"Fan {i + 1}" if group == "fan" else "")
+            off = 3 + (first + i) * NAME_SIZE
+            buf[off:off + NAME_SIZE] = text.encode("latin-1")[:NAME_SIZE - 1].ljust(NAME_SIZE, b"\0")
+    seal(buf)
+    return buf
+
+
 def factory_control_report(spec: DeviceSpec) -> bytearray:
     """A plausible settings report, as a new device (or one set up with aquasuite) would have."""
     buf = bytearray(spec.ctrl_length)
@@ -161,6 +182,7 @@ class SimDevice:
         self.radiator = radiator
         self.fans = [SimFan(f.key, 4800 if f.pump else 1800, f.pump) for f in self.spec.fans]
         self.ctrl = factory_control_report(self.spec) if self.spec.family == "standard" and self.spec.ctrl_id else None
+        self.names = name_report(kind, SIM_NAMES)
         self.soft: list[tuple[float, int, float] | None] = [None] * 16
         self.settings_writes = 0
         self.save_reports = 0
@@ -298,6 +320,8 @@ class SimTransport:
             return bytes(d.ctrl[:length])
         if d.spec.status_via_feature and report_id == d.spec.status_id:
             return d.status_report()[:length]
+        if d.names is not None and report_id == d.names[0]:
+            return bytes(d.names[:length])
         raise DeviceError(f"simulated {d.spec.name} has no feature report {report_id:#04x}")
 
     def set_feature(self, data: bytes) -> None:

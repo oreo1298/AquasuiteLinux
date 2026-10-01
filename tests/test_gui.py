@@ -175,6 +175,11 @@ def test_import_dialog_reads_device(qapp, window):
     pump(qapp, 1.5)
     assert d.tree.topLevelItemCount() == 4
     assert list(d.slot_combos) == [1]
+    # the simulated QUADRO calls software sensor 1 "Delta T": the demo's Delta T is picked for it
+    assert d.slot_combos[1].current_id() == "virtual/deltat"
+    from PySide6.QtWidgets import QFormLayout
+    label = d.slots_form.itemAt(0, QFormLayout.ItemRole.LabelRole).widget()
+    assert label.text() == "Software sensor 1 “Delta T” ←"
     d.close()
 
 

@@ -298,7 +298,9 @@ class Doctor:
                 if api is not None:
                     settings = api.device_settings(key)      # the service reads it, paced with its writes
                 else:
+                    from .engine import Engine
                     settings = control.ControlReport(spec, dev.read_control(fresh=True)).to_dict()
+                    settings["names"] = Engine._device_names(dev)
             except AquaError as exc:
                 self.finding(f"{spec.name}: reading the settings report failed: {exc}")
         if settings:
@@ -310,6 +312,10 @@ class Doctor:
                   else "settings report: read")
         if not valid:
             self.finding(f"{spec.name}: the settings report's checksum doesn't match (unknown firmware layout?)")
+        from .aquasuite import custom_name
+        named = {k: v for k, v in (data.get("names") or {}).items() if custom_name(v)}
+        if named:
+            self.line("names given in aquasuite: " + ", ".join(f"{k} “{v}”" for k, v in named.items()))
         for f in data.get("fans", []):
             mode = f["mode"]
             name = MODES.get(mode) or (f"follow fan {mode - control.MODE_FOLLOW + 1}"

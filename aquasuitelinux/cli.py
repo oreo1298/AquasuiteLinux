@@ -262,26 +262,37 @@ def _print_plan(plan: aquasuite.ImportPlan) -> None:
 
 
 def cmd_import(s: Session, args) -> int:
+    snap = s.snapshot()
     if args.file:
         found = aquasuite.find_settings(Path(args.file).read_bytes(), Path(args.file).name)
         if not found:
             raise SystemExit("No device settings found in that file.")
         f = found[args.index] if args.index < len(found) else found[0]
         key = args.device or (f"{f.spec.kind}-{f.serial}" if f.serial else f.spec.kind)
-        plan = aquasuite.plan_import(f.spec, f.data, key)
+        print(f"found: {f.origin}")
+        plan = aquasuite.plan_import(f.spec, f.data, key, f.names)
     else:
         if not args.device:
             raise SystemExit("Name the device: aquactl import DEVICE (see aquactl devices)")
-        s.snapshot()
         data = s.api.device_settings(args.device)
-        plan = aquasuite.plan_import(BY_KIND[data["kind"]], base64.b64decode(data["raw"]), args.device)
+        plan = aquasuite.plan_import(BY_KIND[data["kind"]], base64.b64decode(data["raw"]), args.device,
+                                     data.get("names"))
     if args.all:
         for item in plan.items:
             item.selected = True
+    cfg = s.config()
+    readings = {r["id"]: r for r in snap.get("readings", [])}
+    slot_map = aquasuite.suggest_sources(plan, cfg, readings)
+    slot_map.update(_slot_map(args.map))
     _print_plan(plan)
+    for slot in plan.soft_slots:
+        name = f" “{plan.slot_name(slot)}”" if plan.slot_name(slot) else ""
+        print(f"  software sensor {slot}{name} ← {plan.describe_source(slot_map.get(slot, ''))}")
+    if plan.sensor_names():
+        print("  sensor names: " + ", ".join(f"{k} “{v}”" for k, v in plan.sensor_names().items()))
     if args.dry_run:
         return 0
-    cfg = aquasuite.apply_import(s.config(), plan, _slot_map(args.map))
+    cfg = aquasuite.apply_import(cfg, plan, slot_map)
     print(s.save_config(cfg))
     return 0
 
@@ -453,7 +464,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--file", help="aquasuite file or backup to search instead")
     sp.add_argument("--index", type=int, default=0, help="which settings block of the file")
     sp.add_argument("--map", action="append", metavar="SLOT=SENSOR",
-                    help="feed a software sensor slot from a sensor, e.g. 1=virtual/deltat")
+                    help="which sensor a software sensor slot stands for, e.g. 1=virtual/deltat (default: "
+                         "guessed from the names in aquasuite; 1= leaves it unassigned)")
     sp.add_argument("--all", action="store_true", help="also import outputs in manual mode")
     sp.add_argument("--dry-run", action="store_true", help="only show what would be imported")
     sp = add("backup", cmd_backup, "save a device's settings to a file")

@@ -84,3 +84,16 @@ def test_help_and_version(capsys):
     with pytest.raises(SystemExit):
         cli.main(["--version"])
     assert "aquactl" in capsys.readouterr().out
+
+
+def test_import_aquasuite_backup_sets_up_the_delta_t(capsys, tmp_path):
+    from test_import import aquasuite_device_backup
+    f = tmp_path / "quadro_profile.xml"
+    f.write_bytes(aquasuite_device_backup(serial="10234-55001"))
+    assert cli.main(["--demo", "import", "--file", str(f), "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "aquasuite backup of QUADRO 10234-55001" in out
+    assert "Fan 1: curve on software sensor 1 “Delta T”" in out
+    # the demo already has a Delta T over the same two sensors: it is reused
+    assert "software sensor 1 “Delta T” ← virtual/deltat" in out
+    assert "sensor names: temp1 “Water Temp”, temp2 “Ambient”" in out

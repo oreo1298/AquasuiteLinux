@@ -53,6 +53,7 @@ def test_report_lists_device_usb_layout_and_settings(tmp_path):
     assert "serial 10234-55001" in text and "status reports:" in text
     assert "fan1: curve, input virt1" in text and "checksum OK" in text
     assert "outputs: fan1 " in text and " rpm" in text
+    assert "names given in aquasuite: temp1 “Water Temp”, temp2 “Ambient”, virt1 “Delta T”" in text
     assert "== Summary ==" in text
     assert bulk.sent == []                                  # without --feed-test nothing is sent
 

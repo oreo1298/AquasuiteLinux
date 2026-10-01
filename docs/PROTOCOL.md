@@ -23,8 +23,13 @@ SET_REPORT control request, which the QUADRO rejects (EPROTO / ETIMEDOUT) — te
 No kernel driver uses interface 0, so claiming it doesn't disturb hidraw or the hwmon driver. The
 endpoint is found through sysfs (`aquactl probe` prints the layout). The kernel driver and hidraw work
 side by side. The devices need about 200 ms between settings
-operations; AquasuiteLinux paces them like the kernel driver does. Feature report 0x08 holds the names
-aquasuite shows for sensors and outputs (according to aqdctl); AquasuiteLinux doesn't use it. The aquaero and the LEAKSHIELD expose
+operations; AquasuiteLinux paces them like the kernel driver does. Feature report 0x08 (1013 bytes) holds the names
+aquasuite shows for sensors and outputs: 24-byte NUL-padded Latin-1 slots after a 3-byte header, sealed with
+the same CRC-16. QUADRO slots (from an aquasuite backup of a real QUADRO): fans 0–3, LED controllers 8–15,
+flow 16, temperature sensors 17–20, software sensors 24–39. OCTO (from aqdctl): fans 0–7, sensors 20–23,
+flow 24, software sensors 26–41. AquasuiteLinux only reads it, to label imports. aquasuite's device backup
+(`<DeviceBackup>` XML) stores the settings report (padded to 1013 bytes) as item `settings` and this report
+as item `flash`, both base64. The aquaero and the LEAKSHIELD expose
 several HID interfaces under one product ID; the right one is chosen from the report descriptors.
 
 ## Product IDs

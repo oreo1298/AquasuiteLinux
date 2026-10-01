@@ -1073,7 +1073,17 @@ class Engine:
             rep = control.ControlReport(dev.spec, dev.read_control(fresh=True))
             data = rep.to_dict()
             data["device"] = key
+            data["names"] = self._device_names(dev)
             return data
+
+    @staticmethod
+    def _device_names(dev: BaseDevice) -> dict[str, str]:
+        """Names given to the device's sensors in aquasuite, if the device keeps them (best effort)."""
+        from .aquasuite import parse_names
+        try:
+            return parse_names(dev.spec.kind, dev.read_names())
+        except AquaError:
+            return {}
 
     def apply_device_settings(self, key: str, changes: dict) -> None:
         with self.lock:
