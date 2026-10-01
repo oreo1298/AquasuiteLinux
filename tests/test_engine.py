@@ -28,6 +28,13 @@ def sim(dev):
     return dev.transport.device
 
 
+def feeding_config() -> Config:
+    """A config that sends software sensor data to devices (off by default)."""
+    cfg = Config()
+    cfg.settings.device_feeds = True
+    return cfg
+
+
 def test_demo_places_curves_on_device_and_feeds_delta_t(demo_engine):
     snap = run_ticks(demo_engine, 10)
     outs = {o["id"]: o for o in snap["outputs"]}
@@ -85,7 +92,7 @@ def test_software_mode_limits_writes():
 
 
 def test_explicit_feed_and_unmanaged_outputs_untouched():
-    cfg = Config()
+    cfg = feeding_config()
     cfg.virtual_sensors = [VirtualSensorConfig(id="cpu", kind="scale", inputs=["system/k10temp/tctl"])]
     cfg.feeds = [FeedConfig(QUADRO, 5, "virtual/cpu")]
     eng, _world, devs = sim_engine(cfg)
@@ -101,7 +108,7 @@ def test_explicit_feed_and_unmanaged_outputs_untouched():
 
 
 def test_feed_that_is_not_echoed_falls_back_to_software():
-    cfg = Config()
+    cfg = feeding_config()
     cfg.virtual_sensors = [VirtualSensorConfig(id="dt", kind="difference",
                                                inputs=[f"{QUADRO}/temp1", f"{QUADRO}/temp2"])]
     cfg.controllers = [ControllerConfig(id="c", kind="curve", input="virtual/dt", points=[[0, 20], [10, 100]])]
@@ -150,7 +157,7 @@ def test_profiles_and_overrides(demo_engine):
 
 
 def test_exit_sets_fallback_and_invalidates_feeds():
-    cfg = Config()
+    cfg = feeding_config()
     cfg.virtual_sensors = [VirtualSensorConfig(id="dt", kind="difference",
                                                inputs=[f"{QUADRO}/temp1", f"{QUADRO}/temp2"])]
     cfg.controllers = [ControllerConfig(id="c", kind="curve", input="virtual/dt"),
@@ -261,7 +268,7 @@ def test_pump_is_never_stopped_by_a_controller():
 
 
 def _delta_t_curve_config(**output):
-    cfg = Config()
+    cfg = feeding_config()
     cfg.virtual_sensors = [VirtualSensorConfig(id="dt", kind="difference",
                                                inputs=[f"{QUADRO}/temp1", f"{QUADRO}/temp2"])]
     cfg.controllers = [ControllerConfig(id="c", kind="curve", input="virtual/dt", points=[[2, 20], [10, 100]])]
@@ -334,5 +341,119 @@ def test_devices_without_a_feed_path_use_software():
         snap = run_ticks(eng, 3)
         o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]
         assert o["placement"] == "software" and "no software sensors" in o["reason"]
+    finally:
+        eng.stop()
+
+
+class FakeBulk:
+    """Stands in for the usbfs channel and hands the data to the simulated device."""
+
+    def __init__(self, transport):
+        self.transport = transport
+        self.sent = 0
+        self.closed = 0
+
+    def write(self, data):
+        self.sent += 1
+        self.transport.write_output(data)
+
+    def close(self):
+        self.closed += 1
+
+    def describe(self):
+        return "fake bulk endpoint"
+
+
+def test_feeds_are_off_by_default_and_remote_curves_run_in_software():
+    cfg = _delta_t_curve_config()
+    cfg.settings.device_feeds = False
+    eng, _world, devs = sim_engine(cfg)
+    sent = []
+    forward = devs[0].transport.write_output
+    devs[0].transport.write_output = lambda data: (sent.append(data), forward(data))
+    try:
+        snap = run_ticks(eng, 4)
+        o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]
+        assert o["placement"] == "software" and "turned off in Settings" in o["reason"]
+        assert sent == []                                              # nothing goes to the bulk endpoint
+        assert {d["key"]: d for d in snap["devices"]}[QUADRO]["feed"] == "off"
+        assert control.ControlReport(devs[0].spec, sim(devs[0]).ctrl).fan(0).mode == control.MODE_MANUAL
+        # switched on while running: the curve moves onto the device once the feed is confirmed
+        on = eng.config.copy()
+        on.settings.device_feeds = True
+        eng.set_config(on, save=False)
+        snap = run_ticks(eng, 8)
+        o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]
+        assert o["placement"] == "device" and sent
+        # and off again: sending stops, the curve goes back to software
+        eng.set_config(cfg.copy(), save=False)
+        n = len(sent)
+        snap = run_ticks(eng, 3)
+        assert len(sent) == n
+        assert {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan1"]["placement"] == "software"
+    finally:
+        eng.stop()
+
+
+def test_device_that_goes_quiet_while_receiving_data_gets_no_more(monkeypatch):
+    import aquasuitelinux.core.device as device_mod
+    monkeypatch.setattr(device_mod, "STALE_AFTER", 0.5)
+    eng, _world, devs = sim_engine(_delta_t_curve_config())
+    bulk = devs[0].bulk = FakeBulk(devs[0].transport)
+    try:
+        run_ticks(eng, 6)
+        assert eng.feed_ok.get(QUADRO) and bulk.sent
+        devs[0].transport.read_input = lambda timeout=0.0: []      # the device stops reporting
+        snap = run_ticks(eng, 5)
+        assert QUADRO in eng.feed_broken and bulk.closed            # stopped, USB interface released
+        assert any("stopped sending sensor data" in e[2] for e in snap["events"])
+        n = bulk.sent
+        run_ticks(eng, 3)
+        assert bulk.sent == n
+        o = {o["id"]: o for o in eng.snapshot()["outputs"]}[f"{QUADRO}/fan1"]
+        assert o["placement"] == "software"
+    finally:
+        eng.stop()
+
+
+def test_device_that_disconnects_soon_after_feeding_is_not_fed_again():
+    from aquasuitelinux.core.errors import DeviceError
+    eng, _world, devs = sim_engine(_delta_t_curve_config())
+    try:
+        run_ticks(eng, 3)
+        assert QUADRO in eng.fed_devices
+
+        def gone():
+            raise DeviceError("/dev/hidraw8 was disconnected")
+        devs[0].poll = gone
+        snap = run_ticks(eng, 1)
+        assert QUADRO not in eng.devices and QUADRO in eng.feed_broken
+        assert any("disconnected soon after" in e[2] for e in snap["events"])
+    finally:
+        eng.stop()
+
+
+def test_a_failing_step_is_reported_once_and_the_rest_keeps_running(monkeypatch):
+    cfg = Config()
+    cfg.controllers = [ControllerConfig(id="f", kind="fixed", power=40)]
+    cfg.outputs[f"{QUADRO}/fan2"] = OutputConfig(controller="f", placement="software")
+    eng, _world, devs = sim_engine(cfg, kinds=("quadro", "d5next"))
+
+    def broken(*_a):
+        raise KeyError("boom")
+    monkeypatch.setattr(eng, "_verify_device_outputs", broken)
+    d5 = next(d for d in devs if d.spec.kind == "d5next")
+    monkeypatch.setattr(d5, "poll", lambda: 1 / 0)                     # a bug, not a disconnect
+    try:
+        first = eng.tick()
+        snap = run_ticks(eng, 4)
+        assert snap["time"] > first["time"]                            # the snapshot keeps updating
+        assert any(r["id"] == f"{QUADRO}/temp1" for r in snap["readings"])
+        assert d5.key in eng.devices                                   # not dropped
+        errors = [e[2] for e in snap["events"] if e[1] == "error"]
+        assert sum("checking device curves" in e for e in errors) == 1
+        assert sum(f"reading {d5.key}" in e for e in errors) == 1
+        o = {o["id"]: o for o in snap["outputs"]}[f"{QUADRO}/fan2"]
+        assert o["placement"] == "software" and o["target"] == 43      # 40 % scaled into 5…100 %
     finally:
         eng.stop()

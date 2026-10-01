@@ -27,6 +27,7 @@ def demo_provider(speed: float = 4.0) -> StaticProvider:
 
 def demo_config() -> Config:
     cfg = Config()
+    cfg.settings.device_feeds = True          # the simulated devices take software sensor data
     cfg.devices[QUADRO] = cfg.device(QUADRO)
     cfg.devices[QUADRO].sensor_names = {"temp1": "Coolant (GPU out)", "temp2": "Ambient air", "temp3": "Radiator out"}
     cfg.devices[D5] = cfg.device(D5)

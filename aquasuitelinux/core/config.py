@@ -178,6 +178,11 @@ class EngineSettings:
     log_dir: str = ""
     system_sensors: bool = True
     nvidia: bool = True
+    # Send sensor values (a Delta T, the CPU temperature, …) to the devices' software sensors so a
+    # QUADRO/OCTO/D5 NEXT runs those curves itself, and pump speed/flow to a LEAKSHIELD. Off by
+    # default: it uses the devices' USB bulk endpoint, which isn't confirmed on real hardware yet.
+    # When off, curves on such inputs run in software.
+    device_feeds: bool = False
 
 
 @dataclass

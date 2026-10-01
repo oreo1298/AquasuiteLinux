@@ -25,6 +25,9 @@ Third-party references
   contributors, whose Aquacomputer driver by Aleksa Savic documents the direct manual-mode write.
   Used as a reference only.
 
+* aqdctl (https://github.com/detrophy/aqdctl), whose USB captures of aquasuite show which transfer
+  types aquasuite uses for the settings, "save" and name reports. Used as a reference only.
+
 * The user interface shares its design system (colour tokens, style sheet, icon style and small
   widgets) with the author's ReolinkLinux, EZP2019Linux and FirmwareLab applications (MIT).
 

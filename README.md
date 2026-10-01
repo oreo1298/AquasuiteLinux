@@ -46,9 +46,11 @@ aquastream XT, poweradjust 3, high flow USB and mps flow.
   input is unavailable, **hold minimum power** (instead of stopping the fan), **start boost**, and
   speed-change limits.
 - **On the device or in software.** Curve controllers run on the QUADRO, OCTO and D5 NEXT themselves,
-  the way aquasuite does: the curve is stored once, and inputs that live elsewhere (a Delta T, the CPU
-  temperature, a sensor on another device) are streamed every second into one of the device's
-  software sensors. Other controllers run in software. You choose per output, or let it decide.
+  the way aquasuite does: the curve is stored once. Curves on the device's own sensors always can;
+  curves on inputs that live elsewhere (a Delta T, the CPU temperature, a sensor on another device) can
+  when *Send sensor values to devices* is on (experimental, see below): the value is then streamed every
+  second into one of the device's software sensors. Everything else runs in software. You choose per
+  output, or let it decide.
 - **Test** any output at a chosen power for 30 seconds.
 
 **Bring your aquasuite setup over**
@@ -105,6 +107,11 @@ When it can't open them (no udev rule yet, see below) it falls back to the Linux
 | **aquastream XT** | ✔ temperatures, pump and fan speed | ✔ pump and fan (software) | — | — |
 | **poweradjust 3** | ✔ temperatures, fan, flow | — | — | — |
 | **high flow USB / mps flow** | ✔ temperatures, flow | — | — | — |
+
+Software sensor feeds and the LEAKSHIELD feed are **experimental and off by default** (Settings → *Send
+sensor values to devices*, or `aquactl feeds on`): they use the devices' vendor USB bulk endpoint, which
+isn't confirmed on real hardware yet. Until then, curves on a Delta T or a PC sensor run in software, which
+works on every device. `aquactl doctor --feed-test` tells you whether your device takes the values.
 
 ¹ The layout is the QUADRO's; AquasuiteLinux checks that the device reports the values back and, if it
 doesn't, controls those outputs in software instead and tells you.
@@ -252,7 +259,8 @@ Back up settings…*) import the same way.
 
 - **On the device** (curve and follow controllers on the QUADRO, OCTO and D5 NEXT): the curve, input,
   limits and flags are written into the device's settings **once**, when you change them. Inputs from
-  elsewhere are sent every second as volatile software sensor values. Nothing is written to the device's
+  elsewhere are sent every second as volatile software sensor values (only with *Send sensor values to
+  devices* on; otherwise such curves run in software). Nothing is written to the device's
   memory while it runs, and the device keeps controlling its fans by itself. If the data stops (the
   service is stopped, the PC hangs), the device runs those fans at their **fallback power**.
 - **In software** (PID, two-point, combine, and devices that can't run curves): AquasuiteLinux computes
@@ -266,7 +274,9 @@ Back up settings…*) import the same way.
 - **Alarms with "full power"** switch every controlled output to 100 % until the alarm clears.
 - **Safety checks**: if a device doesn't keep the settings written to it, or a curve running on the device
   reports a power far from what the curve gives, AquasuiteLinux stops relying on the device for those
-  outputs, controls them in software and tells you. A controller never stops a pump.
+  outputs, controls them in software and tells you. A device that refuses software sensor values, doesn't
+  report them back, goes quiet or disconnects soon after receiving them gets no more until you click *Look
+  for devices again*. A controller never stops a pump.
 
 Use one fan control tool per device: if liquidctl, CoolerControl or `fancontrol` also write to the same
 QUADRO, they and AquasuiteLinux will overwrite each other.
@@ -291,6 +301,8 @@ aquactl import --file device-backup.zip --dry-run
 aquactl settings quadro-12345-67890 --offset temp2=-0.4 --flow-pulses 169
 aquactl backup quadro-12345-67890 -o quadro.json
 aquactl monitor virtual/deltat quadro-12345-67890/flow
+aquactl feeds on                               # send sensor values to devices (experimental)
+aquactl doctor                                 # check the setup; paste the output into a bug report
 aquactl probe --dump                           # HID details for a bug report about a new device
 aquactl --demo status                          # try it with the simulated devices
 ```
@@ -298,6 +310,11 @@ aquactl --demo status                          # try it with the simulated devic
 `aquactl --help` and `aquactl COMMAND --help` list every option.
 
 ## Troubleshooting
+
+**Start with `aquactl doctor`.** It checks the service, permissions, the devices, their live data and
+stored settings, and what the service is doing, and prints one report to paste into an issue.
+`sudo systemctl stop aquasuited; aquactl doctor --feed-test; sudo systemctl start aquasuited` also
+tests whether your device takes software sensor values (it uses one unused slot for a few seconds).
 
 - **"No permission for QUADRO (/dev/hidrawN)"**: the udev rule isn't active. Install it (the Arch package
   and `packaging/install.sh` do), then re-plug the device. Until then AquasuiteLinux reads the sensors
@@ -308,8 +325,9 @@ aquactl --demo status                          # try it with the simulated devic
 - **"could not send software sensor values"**: the Delta T (or other value from elsewhere) goes to the
   device's vendor USB interface through `/dev/bus/usb`. Update to the current udev rule (reinstall the
   package or rerun `packaging/install.sh`) and re-plug the device, or use the background service. Until
-  then those curves run in software. `aquactl probe` shows the USB layout and the path in use; after
-  fixing it, click *Look for devices again* on the Overview to retry.
+  then those curves run in software. `aquactl doctor` shows the USB layout and the path in use; after
+  fixing it, click *Look for devices again* on the Overview to retry. If it keeps failing, turn *Send
+  sensor values to devices* off: the curves then run in software for good.
 - **A fan shows STARTING**: its curve reads a value from elsewhere, and AquasuiteLinux is checking the
   device receives it before storing the curve (a few seconds; the device keeps its settings meanwhile).
 - **Fans go to full speed when I quit**: that's the fallback power of software-controlled outputs. Enable

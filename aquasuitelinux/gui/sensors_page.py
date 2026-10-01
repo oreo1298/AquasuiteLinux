@@ -371,16 +371,19 @@ class SensorsPage(QWidget):
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, (f["device"], f["slot"], f.get("auto", False)))
             self.flist.addItem(item)
+        off = not self.bridge.config.settings.device_feeds
+        why = "sending is turned off in Settings" if off else "device not connected"
         for f in self.bridge.config.feeds:
             if (f.device, f.slot) in shown:
                 continue
             item = QListWidgetItem(f"{self.bridge.device_name(f.device)} · software sensor {f.slot}\n"
-                                   f"← {self.bridge.label(f.source)}  (device not connected)")
+                                   f"← {self.bridge.label(f.source)}  ({why})")
             item.setData(Qt.UserRole, (f.device, f.slot, False))
             self.flist.addItem(item)
         for ls in self.bridge.config.leakshield:
             item = QListWidgetItem(f"{self.bridge.device_name(ls.device)} · pump speed and flow\n"
-                                   f"← {self.bridge.label(ls.pump)}, {self.bridge.label(ls.flow)}")
+                                   f"← {self.bridge.label(ls.pump)}, {self.bridge.label(ls.flow)}"
+                                   + ("  (sending is turned off in Settings)" if off else ""))
             item.setData(Qt.UserRole, (ls.device, -1, False))
             self.flist.addItem(item)
         if not self.flist.count():

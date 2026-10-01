@@ -321,6 +321,9 @@ class FeedDialog(QDialog):
         lay.addWidget(_muted("The value is sent every second into one of the device's software sensors, as "
                              "aquasuite does. Curves stored on the device (and the device's own display, if it has "
                              "one) can then use it."))
+        if not bridge.config.settings.device_feeds:
+            lay.addWidget(_muted("Sending sensor values to devices is turned off in Settings (it is experimental). "
+                                 "The feed is saved and starts once you turn it on."))
         form = QFormLayout()
         form.setHorizontalSpacing(14)
         self.device = QComboBox()
@@ -420,7 +423,8 @@ class DeviceDialog(QDialog):
         grid.add_row("Power cycles", str(info.get("power_cycles") if info.get("power_cycles") is not None else "—"))
         grid.add_row("Settings writes", f"{info.get('writes', 0)} this session")
         if info.get("feed_path"):
-            state = {"ok": "working", "broken": "not working", "pending": "checking…"}.get(info.get("feed", ""), "")
+            state = {"ok": "working", "broken": "not working", "pending": "checking…",
+                     "off": "turned off in Settings"}.get(info.get("feed", ""), "")
             grid.add_row("Software sensor data", info["feed_path"] + (f" — {state}" if state else ""))
         lay.addWidget(grid)
         if info.get("notes"):
@@ -1009,6 +1013,12 @@ class SettingsDialog(QDialog):
         self.nvidia.setChecked(s.nvidia)
         f2.addRow("", self.system)
         f2.addRow("", self.nvidia)
+        self.feeds = QCheckBox("Send sensor values to devices (experimental)")
+        self.feeds.setChecked(s.device_feeds)
+        self.feeds.setToolTip("Lets a QUADRO, OCTO or D5 NEXT run curves on a Delta T or a PC sensor by itself, and "
+                              "gives a LEAKSHIELD the pump speed and flow.\nUses the device's USB bulk endpoint, which "
+                              "isn't confirmed on real hardware yet. When off, those curves run in software.")
+        f2.addRow("", self.feeds)
         lay.addLayout(f2)
 
         lay.addWidget(_title("Background service"))
@@ -1054,13 +1064,15 @@ class SettingsDialog(QDialog):
         self.gs.save()
         s = self.bridge.config.settings
         if (self.interval.value(), self.history.value(), self.exit.currentData(), self.system.isChecked(),
-                self.nvidia.isChecked()) != (s.interval, s.history_minutes, s.exit_action, s.system_sensors, s.nvidia):
+                self.nvidia.isChecked(), self.feeds.isChecked()) != (s.interval, s.history_minutes, s.exit_action,
+                                                                     s.system_sensors, s.nvidia, s.device_feeds):
             def change(cfg):
                 cfg.settings.interval = self.interval.value()
                 cfg.settings.history_minutes = self.history.value()
                 cfg.settings.exit_action = self.exit.currentData()
                 cfg.settings.system_sensors = self.system.isChecked()
                 cfg.settings.nvidia = self.nvidia.isChecked()
+                cfg.settings.device_feeds = self.feeds.isChecked()
             self.bridge.edit(change, "Settings saved")
         super().accept()
 

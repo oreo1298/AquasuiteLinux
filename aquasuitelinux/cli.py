@@ -390,6 +390,22 @@ def cmd_probe(_s, args) -> int:
     return 0
 
 
+def cmd_doctor(_s, args) -> int:
+    """Everything needed to understand a problem, in one report (paste it into a bug report)."""
+    from .core.doctor import Doctor
+    return Doctor(out=lambda text: print(text, flush=True)).run(feed_test=args.feed_test)
+
+
+def cmd_feeds(s: Session, args) -> int:
+    cfg = s.config()
+    if args.state is None:
+        print("on" if cfg.settings.device_feeds else "off")
+        return 0
+    cfg.settings.device_feeds = args.state == "on"
+    print(f"sending sensor values to devices: {args.state} — {s.save_config(cfg)}")
+    return 0
+
+
 # ---------------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aquactl", description=f"{__app_name__} command-line tool")
@@ -455,8 +471,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("monitor", cmd_monitor, "print readings continuously")
     sp.add_argument("sensors", nargs="*")
     sp.add_argument("-n", "--interval", type=float, default=2.0)
+    sp = add("feeds", cmd_feeds, "show or switch sending sensor values (e.g. a Delta T) to devices")
+    sp.add_argument("state", nargs="?", choices=("on", "off"))
     sp = add("probe", cmd_probe, "list Aquacomputer HID interfaces (for bug reports)")
     sp.add_argument("--dump", action="store_true", help="also print one status report")
+    sp = add("doctor", cmd_doctor, "check the setup and print a report to paste into a bug report")
+    sp.add_argument("--feed-test", action="store_true",
+                    help="also test sending software sensor values (stop the service first)")
     return p
 
 
@@ -466,8 +487,8 @@ def main(argv: list[str] | None = None) -> int:
     if not getattr(args, "fn", None):
         args.fn = cmd_status
         args.json = False
-    if args.fn is cmd_probe:
-        return cmd_probe(None, args)
+    if args.fn in (cmd_probe, cmd_doctor):
+        return args.fn(None, args)
     s = None
     try:
         s = Session(args)

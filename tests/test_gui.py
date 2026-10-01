@@ -100,6 +100,22 @@ def test_dialogs_build(qapp, window):
         d.close()
 
 
+def test_settings_turn_device_feeds_off(qapp, window):
+    from aquasuitelinux.core.demo import QUADRO
+    from aquasuitelinux.gui import dialogs
+    from aquasuitelinux.gui.settings import GuiSettings
+    b = window.bridge
+    assert b.config.settings.device_feeds                       # the demo turns them on
+    d = dialogs.SettingsDialog(b, GuiSettings(tray=False), window)
+    d.feeds.setChecked(False)
+    d.accept()
+    pump(qapp, 2.5)
+    assert not b.config.settings.device_feeds
+    outs = {o["id"]: o for o in b.snap["outputs"]}
+    assert outs[f"{QUADRO}/fan1"]["placement"] == "software"
+    assert "turned off in Settings" in outs[f"{QUADRO}/fan1"]["reason"]
+
+
 def test_delta_t_dialog_computes_preview(qapp, window):
     from aquasuitelinux.core.demo import QUADRO
     from aquasuitelinux.gui.dialogs import VirtualSensorDialog

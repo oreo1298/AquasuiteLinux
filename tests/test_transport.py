@@ -4,45 +4,14 @@ import errno
 import os
 
 import pytest
+from conftest import quadro_sysfs
 
 from aquasuitelinux.core import transport
 from aquasuitelinux.core.errors import DeviceError
 
 
-def _quadro_sysfs(tmp_path, hid_interrupt_out=False, vendor_bulk=True):
-    """The QUADRO's USB layout: interface 0 vendor-specific (bulk 0x81 in, 0x02 out), interface 1 HID."""
-    usb = tmp_path / "devices" / "1-3"
-    usb.mkdir(parents=True)
-    (usb / "busnum").write_text("1\n")
-    (usb / "devnum").write_text("5\n")
-
-    def iface(num, cls, eps):
-        d = usb / f"1-3:1.{num}"
-        d.mkdir()
-        (d / "bInterfaceNumber").write_text(f"{num:02x}\n")
-        (d / "bInterfaceClass").write_text(cls + "\n")
-        for addr, kind, direction in eps:
-            e = d / f"ep_{addr:02x}"
-            e.mkdir()
-            (e / "bEndpointAddress").write_text(f"{addr:02x}\n")
-            (e / "type").write_text(kind + "\n")
-            (e / "direction").write_text(direction + "\n")
-        return d
-
-    if vendor_bulk:
-        iface(0, "ff", [(0x81, "Bulk", "in"), (0x02, "Bulk", "out")])
-    hid_eps = [(0x83, "Interrupt", "in")] + ([(0x04, "Interrupt", "out")] if hid_interrupt_out else [])
-    hid = iface(1, "03", hid_eps)
-    hid_dev = hid / "0003:0C70:F00D.0007"
-    hid_dev.mkdir()
-    root = tmp_path / "class" / "hidraw"
-    (root / "hidraw8").mkdir(parents=True)
-    os.symlink(hid_dev, root / "hidraw8" / "device")
-    return root
-
-
 def test_feed_channel_finds_the_vendor_bulk_endpoint(tmp_path):
-    root = _quadro_sysfs(tmp_path)
+    root = quadro_sysfs(tmp_path)
     mode, ch = transport.feed_channel("/dev/hidraw8", root, tmp_path / "dev")
     assert mode == "bulk"
     assert (ch.interface, ch.endpoint) == (0, 0x02)
@@ -50,9 +19,9 @@ def test_feed_channel_finds_the_vendor_bulk_endpoint(tmp_path):
 
 
 def test_feed_channel_hid_or_none(tmp_path):
-    root = _quadro_sysfs(tmp_path / "a", hid_interrupt_out=True, vendor_bulk=False)
+    root = quadro_sysfs(tmp_path / "a", hid_interrupt_out=True, vendor_bulk=False)
     assert transport.feed_channel("/dev/hidraw8", root)[0] == "hid"
-    root = _quadro_sysfs(tmp_path / "b", vendor_bulk=False)
+    root = quadro_sysfs(tmp_path / "b", vendor_bulk=False)
     assert transport.feed_channel("/dev/hidraw8", root)[0] == "none"
 
 

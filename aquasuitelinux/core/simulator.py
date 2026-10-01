@@ -150,7 +150,7 @@ def factory_control_report(spec: DeviceSpec) -> bytearray:
         rep.set_fan(i, fc)
         rep.set_setup(i, control.FanSetup(hold_min=True, min_power=2000 if not f.pump else 3000,
                                           max_power=10000, fallback=10000))
-    return rep.buf
+    return bytearray(rep.seal()) if spec.ctrl_crc else rep.buf
 
 
 class SimDevice:

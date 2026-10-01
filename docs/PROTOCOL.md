@@ -23,7 +23,8 @@ SET_REPORT control request, which the QUADRO rejects (EPROTO / ETIMEDOUT) — te
 No kernel driver uses interface 0, so claiming it doesn't disturb hidraw or the hwmon driver. The
 endpoint is found through sysfs (`aquactl probe` prints the layout). The kernel driver and hidraw work
 side by side. The devices need about 200 ms between settings
-operations; AquasuiteLinux paces them like the kernel driver does. The aquaero and the LEAKSHIELD expose
+operations; AquasuiteLinux paces them like the kernel driver does. Feature report 0x08 holds the names
+aquasuite shows for sensors and outputs (according to aqdctl); AquasuiteLinux doesn't use it. The aquaero and the LEAKSHIELD expose
 several HID interfaces under one product ID; the right one is chosen from the report descriptors.
 
 ## Product IDs
@@ -70,7 +71,9 @@ GET_FEATURE (IDs 0x04, 0x03 and 0x02) and uses little-endian values.
 ## Settings report (ID 0x03; aquaero 0x0B)
 
 Read with GET_FEATURE, modified, and written back with SET_FEATURE, followed by the "save" report
-`02 00 00 00 02 00 00 00 00 34 C6` (aquaero: `06 00 02 00 00 00 00`). The last two bytes are a
+`02 00 00 00 02 00 00 00 00 34 C6` (aquaero: `06 00 02 00 00 00 00`). AquasuiteLinux sends the save report
+as a feature report, like the kernel driver; USB captures of aquasuite (in the aqdctl project) show
+aquasuite sending it as an *output* report (SET_REPORT with report type 2). The last two bytes are a
 **CRC-16/USB** (poly 0x8005 reflected, init 0xFFFF, xorout 0xFFFF) over bytes 1 … n−3. The aquaero and
 aquastream XT use no checksum. Lengths: QUADRO 0x3C1, OCTO 0x65F, D5 NEXT 0x329, farbwerk 360 0x682,
 aquaero 0xA93.
@@ -114,7 +117,9 @@ on the device). 67 bytes:
 | 0x41 | CRC-16/USB over bytes 1 … 0x40 |
 
 AquasuiteLinux builds byte-for-byte the report captured from aquasuite and sends it every second as a
-bulk transfer to endpoint 0x02. Before storing a curve that reads a software sensor on the device, it
+bulk transfer to endpoint 0x02 — only when *Send sensor values to devices* is on, because the bulk path
+rests on one remark in the kernel driver's reverse-engineering notes ("this seems to be a usb bulk
+transfer") and isn't confirmed on hardware yet. `aquactl doctor --feed-test` checks it on a device. Before storing a curve that reads a software sensor on the device, it
 checks that the device reports the values back in its status report; if the transfer fails or the values
 don't come back, those outputs are controlled in software instead.
 

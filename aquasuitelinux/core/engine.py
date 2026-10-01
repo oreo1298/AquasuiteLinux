@@ -48,6 +48,10 @@ MIN_CHANGE = 1.0            # % — smaller software power changes are not writt
 MAX_REWRITES = 3            # the same settings are written at most this often if the device doesn't keep them
 CURVE_TOLERANCE = 20.0      # % — reported output may differ this much from the expected one
 CURVE_CHECK_SECONDS = 90.0  # … for this long before the device's curves are no longer trusted
+FEED_TRUST_SECONDS = 120.0  # a device that disconnects this soon after we start sending it data gets no more
+ERROR_REPEAT_SECONDS = 300.0
+
+_FAILED = object()          # what a tick step returns when it raised
 
 
 # ---------------------------------------------------------------------- providers
@@ -195,6 +199,7 @@ class Engine:
         self.rewrites: dict[str, tuple[str, int]] = {}           # device -> (desired settings, times written)
         self.settings_stuck: set[str] = set()                    # devices that keep rejecting our settings
         self.curve_suspect: set[str] = set()                     # devices not following their stored curves
+        self._errors_shown: dict[str, float] = {}
         self._plan_dirty = True
         self._last_tick = 0.0
         self._last_scan = 0.0
@@ -279,6 +284,9 @@ class Engine:
                     self.ctrl_states.pop(cid, None)
             self.settings_stuck.clear()
             self.rewrites.clear()
+            if cfg.settings.device_feeds != old.settings.device_feeds:
+                self.feed_broken.clear()          # switched on again: give every device a fresh chance
+                self.leakshield_broken.clear()
             if cfg.settings.history_minutes != old.settings.history_minutes or \
                     cfg.settings.interval != old.settings.interval:
                 self.history = History(int(cfg.settings.history_minutes * 60 / max(0.2, cfg.settings.interval)))
@@ -393,6 +401,14 @@ class Engine:
         if dev:
             dev.close()
             self.event("warning", f"{dev.spec.name} ({key}) disconnected: {reason}")
+            started = self.feed_first_push.get(key)
+            if key in self.fed_devices and started is not None and time.monotonic() - started < FEED_TRUST_SECONDS:
+                # it may have been the data we sent: don't send it again when it comes back
+                self.feed_broken.add(key)
+                self.event("warning", f"{dev.spec.name} disconnected soon after it started receiving software sensor "
+                                      "values; they won't be sent to it again until you use “Look for devices "
+                                      "again”. Please report this (aquactl doctor).")
+            self._forget_feed(key)
             self._plan_dirty = True
 
     # ------------------------------------------------------------------ the tick
@@ -412,6 +428,9 @@ class Engine:
                 except DeviceError as exc:
                     self._drop(key, str(exc))
                     continue
+                except Exception as exc:  # noqa: BLE001 - one device's problem must not stop the others
+                    self._internal_error(f"reading {key}", exc)
+                    continue
                 names = cfg.devices.get(key)
                 for r in items:
                     if names and r.id.split("/", 1)[1] in names.sensor_names:
@@ -423,7 +442,9 @@ class Engine:
                         readings[r.id] = r
                 except Exception:  # noqa: BLE001 - never let a PC sensor stop fan control
                     log.exception("system sensors failed")
-            self.virtuals.evaluate(cfg.virtual_sensors, readings, dt)
+            # Every step below is isolated: a bug in one is reported, and the others (above all the
+            # snapshot the app shows) keep working.
+            self._step("computing virtual sensors", self.virtuals.evaluate, cfg.virtual_sensors, readings, dt)
             for key, slots in self.feed_slots.items():
                 for slot, sid in slots.items():
                     fed, src = readings.get(f"{key}/virt{slot}"), readings.get(sid)
@@ -431,37 +452,65 @@ class Engine:
                         fed.label = f"Software sensor {slot} ← {src.label}"
                         fed.unit, fed.kind = src.unit, src.kind
             self.readings = readings
+            if self.control:
+                self._step("checking devices that receive data", self._check_quiet_devices)
 
-            self.alarms.evaluate(cfg.alarms, readings, now)
-            for level, text in self.alarms.events:
-                self.event(level, text)
-            fans_max = self.alarms.fans_max(cfg.alarms)
+            fans_max = self._step("checking alarms", self._run_alarms, now)
+            if fans_max is _FAILED:
+                fans_max = False
             for oid, (_p, until) in list(self.overrides.items()):
                 if now > until:
                     del self.overrides[oid]
                     self._plan_dirty = True
 
-            ctrl_values = self._run_controllers(dt)
+            ctrl_values = self._step("running controllers", self._run_controllers, dt)
+            if ctrl_values is _FAILED:
+                ctrl_values = {}
             if self.control:
-                self._verify_feeds(now)
+                self._step("checking software sensor data", self._verify_feeds, now)
                 if self._plan_dirty or fans_max != getattr(self, "_fans_max", False):
                     self._fans_max = fans_max
-                    self._plan(fans_max)
-                    self._plan_dirty = False
-                self._drive_outputs(ctrl_values, dt, now, fans_max)
-                self._verify_device_outputs(now)
-                self._push_feeds(now)
-                self._push_leakshield()
-            self._record(now)
-            self._snapshot = self._build_snapshot(ctrl_values)
+                    if self._step("planning outputs", self._plan, fans_max) is not _FAILED:
+                        self._plan_dirty = False
+                self._step("driving outputs", self._drive_outputs, ctrl_values, dt, now, fans_max)
+                self._step("checking device curves", self._verify_device_outputs, now)
+                self._step("sending software sensor data", self._push_feeds, now)
+                self._step("sending LEAKSHIELD data", self._push_leakshield)
+            self._step("recording history", self._record, now)
+            snap = self._step("building the snapshot", self._build_snapshot, ctrl_values)
+            if snap is not _FAILED:
+                self._snapshot = snap
             return self._snapshot
+
+    def _step(self, what: str, fn, *args):
+        try:
+            return fn(*args)
+        except Exception as exc:  # noqa: BLE001 - see tick()
+            self._internal_error(what, exc)
+            return _FAILED
+
+    def _internal_error(self, what: str, exc: Exception) -> None:
+        now = time.monotonic()
+        if now - self._errors_shown.get(what, -ERROR_REPEAT_SECONDS) < ERROR_REPEAT_SECONDS:
+            return
+        self._errors_shown[what] = now
+        log.error("internal error while %s", what, exc_info=exc)
+        self.event("error", f"Internal error while {what}: {exc!r}. Everything else keeps running; please "
+                            "report this with the output of “aquactl doctor”.")
+
+    def _run_alarms(self, now: float) -> bool:
+        cfg = self.config
+        self.alarms.evaluate(cfg.alarms, self.readings, now)
+        for level, text in self.alarms.events:
+            self.event(level, text)
+        return self.alarms.fans_max(cfg.alarms)
 
     # ------------------------------------------------------------------ planning
     def _plan(self, fans_max: bool) -> None:
         cfg = self.config
         plans: dict[str, OutputPlan] = {}
         slots: dict[str, dict[int, str]] = {}
-        for f in cfg.feeds:
+        for f in cfg.feeds if cfg.settings.device_feeds else ():
             dev = self.devices.get(f.device)
             if dev and dev.spec.soft_sensors and 1 <= f.slot <= dev.spec.soft_sensors.slots and f.source:
                 slots.setdefault(f.device, {})[f.slot] = f.source
@@ -550,6 +599,9 @@ class Engine:
             if idx is not None:
                 plan.source_index = idx
                 return True, ""
+        if not self.config.settings.device_feeds:
+            return False, (f"its input isn't a sensor of the {spec.name}, and sending sensor values to devices is "
+                           "turned off in Settings")
         if "soft_sensors" not in caps:
             return False, f"the {spec.name} has no software sensors to receive this input"
         if plan.device_key in self.feed_broken:
@@ -745,19 +797,47 @@ class Engine:
         return f.label if f else oid
 
     # ------------------------------------------------------------------ software sensors
-    def _feed_failed(self, key: str, dev: BaseDevice, exc: Exception) -> None:
-        """A device that can't take software sensor data: stop sending (each failure can block for seconds)."""
-        self.feed_broken.add(key)
+    def _forget_feed(self, key: str) -> None:
         self.fed_devices.discard(key)
         self.feed_first_push.pop(key, None)
         self.feed_pushed.pop(key, None)
         self.feed_ok.pop(key, None)
+
+    def _give_up_feed(self, key: str, dev: BaseDevice, text: str) -> None:
+        """Stop sending software sensor data to a device until the user asks to retry (rescan)."""
+        self.feed_broken.add(key)
+        self._forget_feed(key)
         self._plan_dirty = True
-        self.event("warning", f"{dev.spec.name}: could not send software sensor values ({exc}). Curves that use "
-                              "a Delta T or another sensor from elsewhere are now controlled in software. "
-                              "Use “Look for devices again” to retry.")
+        try:
+            dev.stop_feed()
+        except Exception:  # noqa: BLE001 - releasing is best effort
+            log.exception("%s: releasing the software sensor data path failed", key)
+        self.event("warning", text)
+
+    def _feed_failed(self, key: str, dev: BaseDevice, exc: Exception) -> None:
+        """A device that can't take software sensor data: stop sending (each failure can block for seconds)."""
+        self._give_up_feed(key, dev, f"{dev.spec.name}: could not send software sensor values ({exc}). Curves that "
+                                     "use a Delta T or another sensor from elsewhere are now controlled in software. "
+                                     "Use “Look for devices again” to retry.")
+
+    def _check_quiet_devices(self) -> None:
+        """A device that stops reporting while it receives our data: stop sending, it may be what upset it."""
+        for key in list(self.fed_devices):
+            dev = self.devices.get(key)
+            if dev is not None and not dev.online and key not in self.feed_broken:
+                self._give_up_feed(key, dev, f"{dev.spec.name} stopped sending sensor data while it was receiving "
+                                             "software sensor values, so they are no longer sent. Curves that use a "
+                                             "Delta T or another sensor from elsewhere are now controlled in "
+                                             "software. Please report this (aquactl doctor).")
 
     def _push_feeds(self, now: float) -> None:
+        if not self.config.settings.device_feeds:
+            for key in list(self.fed_devices):          # switched off while running
+                self._forget_feed(key)
+                dev = self.devices.get(key)
+                if dev is not None:
+                    dev.stop_feed()
+            return
         for key, dev in self.devices.items():
             slots = self.feed_slots.get(key) or {}
             spec = dev.spec.soft_sensors
@@ -791,7 +871,9 @@ class Engine:
             if not self.feed_ok.get(key) and key not in self.feed_broken and now - since > PENDING_SECONDS:
                 dev = self.devices.get(key)
                 if dev is not None:
-                    self._feed_failed(key, dev, f"no confirmation within {PENDING_SECONDS:.0f} s")
+                    self._give_up_feed(key, dev, f"{dev.spec.name} did not confirm the software sensor values within "
+                                                 f"{PENDING_SECONDS:.0f} s (is the input sensor available?); curves "
+                                                 "that use them are now controlled in software")
         for key in list(self.fed_devices):
             first = self.feed_first_push.get(key)
             pushed = self.feed_pushed.get(key) or {}
@@ -808,12 +890,11 @@ class Engine:
                     self.feed_ok[key] = True
                     self._plan_dirty = True        # curves waiting for this feed can now run on the device
                 continue
-            if not self.feed_ok.get(key) and now - first > FEED_VERIFY_SECONDS and key not in self.feed_broken:
-                self.feed_broken.add(key)
-                self._plan_dirty = True
-                name = self.devices[key].spec.name if key in self.devices else key
-                self.event("warning", f"{name} does not report the software sensor values back; its outputs "
-                                      "are now controlled in software instead")
+            dev = self.devices.get(key)
+            if (not self.feed_ok.get(key) and now - first > FEED_VERIFY_SECONDS and key not in self.feed_broken
+                    and dev is not None):
+                self._give_up_feed(key, dev, f"{dev.spec.name} does not report the software sensor values back; "
+                                             "its outputs are now controlled in software instead")
 
     def _verify_device_outputs(self, now: float) -> None:
         """Outputs run by the device should report roughly the power we expect from their curve."""
@@ -840,6 +921,8 @@ class Engine:
                                       "its outputs are now controlled in software. Please report this.")
 
     def _push_leakshield(self) -> None:
+        if not self.config.settings.device_feeds:
+            return
         for ls in self.config.leakshield:
             dev = self.devices.get(ls.device)
             if dev is None or not dev.spec.leakshield_feed or ls.device in self.leakshield_broken:
@@ -905,7 +988,8 @@ class Engine:
                             else dev.spec.name)
             info["model"] = dev.spec.name
             info["writes"] = dev.writes
-            info["feed"] = ("broken" if key in self.feed_broken else "ok" if self.feed_ok.get(key)
+            info["feed"] = ("off" if not cfg.settings.device_feeds
+                            else "broken" if key in self.feed_broken else "ok" if self.feed_ok.get(key)
                             else "pending" if key in self.fed_devices else "")
             info["feed_path"] = dev.feed_description() if hasattr(dev, "feed_description") else ""
             devices.append(info)

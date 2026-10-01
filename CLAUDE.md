@@ -16,7 +16,7 @@ Arch Linux (the user runs a QUADRO).
   `controllers.py`, `alarms.py`, `system.py` (PC sensors), `engine.py` (the loop), `api.py`
   (`LocalAPI`/`ServiceAPI`, same methods), `ipc.py` (UNIX socket JSON lines, SO_PEERCRED),
   `service.py` (`aquasuited`), `session.py` (service or in-process engine), `aquasuite.py`
-  (import + backups), `config.py` (dataclasses ↔ JSON), `demo.py`.
+  (import + backups), `config.py` (dataclasses ↔ JSON), `demo.py`, `doctor.py` (`aquactl doctor`).
 - `aquasuitelinux/gui/` — PySide6. `bridge.py` polls snapshots on a worker thread and serialises
   config writes; pages: `overview.py`, `sensors_page.py`, `controllers_page.py` (+ `curve_editor.py`),
   `outputs_page.py`, `alarms_page.py`; `dialogs.py`; `charts.py` (painted, no QtCharts).
@@ -33,9 +33,16 @@ Arch Linux (the user runs a QUADRO).
   (`transport.UsbBulkChannel`, found by `feed_channel`). hidraw `write()` does NOT work on a real QUADRO:
   its HID interface has no OUT endpoint, so it becomes SET_REPORT and fails with EPROTO/ETIMEDOUT after
   blocking up to 5 s. A failed send marks the device `feed_broken` at once (no retries; rescan clears it).
+- Feeds (software sensors, Leakshield) only run with `settings.device_feeds` (default **off**: the bulk path
+  is unconfirmed on real hardware; the demo turns it on). Off → curves on remote inputs run in software.
 - Curves that need a feed start as placement "pending": nothing is written until the device echoes the
   values (`feed_ok`), then they move onto the device; no confirmation within `PENDING_SECONDS` → software.
-  Octo / farbwerk 360 layouts are unverified.
+  A device that goes quiet while fed, or disconnects within `FEED_TRUST_SECONDS` of the first send, is
+  marked `feed_broken` and its bulk interface released (`stop_feed`). Octo / farbwerk 360 layouts are unverified.
+- Every tick step runs through `Engine._step`: an exception is reported once per `ERROR_REPEAT_SECONDS`
+  and the other steps (and the snapshot) still run. Keep new steps inside it.
+- `aquactl doctor` (`core/doctor.py`) is the first thing to ask users for; `--feed-test` is the only part
+  that writes (one unused software sensor slot, cleared afterwards) and refuses while the service runs.
 - Software placement neutralises the device's min/max (0 / 100 %) because scaling is done in software;
   device placement writes the output's min/max/fallback/flags.
 - Unmanaged outputs (no controller) must never be written.

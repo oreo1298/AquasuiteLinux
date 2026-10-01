@@ -80,6 +80,9 @@ class BaseDevice:
     def raw_status(self) -> bytes | None:
         return None
 
+    def stop_feed(self) -> None:
+        """Stop using the software sensor data path (release what it holds; reopened when needed)."""
+
     def close(self) -> None:
         pass
 
@@ -256,6 +259,11 @@ class HidDevice(BaseDevice):
             raise NotSupported(f"{self.spec.name} is not a Leakshield")
         with self.lock:
             self._send_feed(control.leakshield_feed_report(pump_rpm, flow))
+
+    def stop_feed(self) -> None:
+        if self.bulk is not None:
+            with self.lock:
+                self.bulk.close()            # releases the claimed USB interface
 
     def close(self) -> None:
         for part in (self.bulk, self.transport):
