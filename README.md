@@ -349,6 +349,11 @@ tests whether your device takes software sensor values (it uses one unused slot 
 - **The service runs but no fan is controlled, and my curves are gone**: the service started with its own,
   empty settings; yours are still in `~/.config/aquasuitelinux/config.json`. Open the app and accept moving
   them, or run `aquactl config --load ~/.config/aquasuitelinux/config.json`. `aquactl doctor` shows both.
+- **Ethernet (or Wi-Fi) drops while AquasuiteLinux runs**: versions before 1.0.6 read every temperature
+  sensor of the PC once a second, including network adapters' own; on some chips that disturbs the link.
+  1.0.6 never reads network hardware (`aquactl doctor` lists what it reads and what it leaves alone). If it
+  still happens, untick *Read CPU, GPU and drive temperatures of this PC* in Settings and open an issue with
+  the `aquactl doctor` output.
 - **Changing settings in the app says "Not allowed"** (service mode): changing the service's settings
   needs membership in `wheel`, `sudo`, `admin` or `aquasuite`: `sudo usermod -aG aquasuite $USER`, then
   log out and in.

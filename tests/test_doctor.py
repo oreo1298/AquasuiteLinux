@@ -35,9 +35,14 @@ def make(tmp_path, mode="deliver", api=None):
     sim = SimDevice(World(speed=4.0), "quadro")
     bulk = Bulk(sim, mode)
     lines = []
+    hwmon = tmp_path / "hwmon"
+    for i, name in enumerate(("k10temp", "r8169_0_500:00")):
+        (hwmon / f"hwmon{i}").mkdir(parents=True)
+        (hwmon / f"hwmon{i}" / "name").write_text(name)
+        (hwmon / f"hwmon{i}" / "temp1_input").write_text("40000")
     doc = doctor.Doctor(out=lines.append, hidraw_root=root, dev_usb=tmp_path / "dev", udev_dirs=[rules],
                         open_transport=lambda path: SimTransport(sim), channel_for=lambda node: ("bulk", bulk),
-                        api=api)
+                        api=api, hwmon_root=hwmon)
     return doc, lines, bulk, sim
 
 
@@ -54,6 +59,7 @@ def test_report_lists_device_usb_layout_and_settings(tmp_path):
     assert "fan1: curve, input virt1" in text and "checksum OK" in text
     assert "outputs: fan1 " in text and " rpm" in text
     assert "names given in aquasuite: temp1 “Water Temp”, temp2 “Ambient”, virt1 “Delta T”" in text
+    assert "read once a second: k10temp" in text and "left alone (network hardware): r8169_0_500:00" in text
     assert "== Summary ==" in text
     assert bulk.sent == []                                  # without --feed-test nothing is sent
 

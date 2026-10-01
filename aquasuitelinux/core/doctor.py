@@ -46,7 +46,8 @@ def _value(v, unit: str = "") -> str:
 
 class Doctor:
     def __init__(self, out=print, hidraw_root: Path = SYSFS_HIDRAW, dev_usb: Path = DEV_USB,
-                 udev_dirs=UDEV_DIRS, open_transport=HidrawTransport, channel_for=None, api="auto"):
+                 udev_dirs=UDEV_DIRS, open_transport=HidrawTransport, channel_for=None, api="auto",
+                 hwmon_root: Path | None = None):
         self.out = out
         self.hidraw_root = hidraw_root
         self.dev_usb = dev_usb
@@ -54,6 +55,7 @@ class Doctor:
         self.open_transport = open_transport
         self.channel_for = channel_for or (lambda node: feed_channel(node.path, self.hidraw_root, self.dev_usb))
         self._api = api
+        self.hwmon_root = hwmon_root
         self.findings: list[str] = []
 
     # ------------------------------------------------------------------ output helpers
@@ -75,6 +77,7 @@ class Doctor:
         api = self.service()
         self.configuration(api)
         self.udev()
+        self.pc_sensors(api)
         nodes = self.hardware()
         for node, spec in nodes:
             self.live(node, spec, api)
@@ -187,6 +190,24 @@ class Doctor:
                          f"Move it: open the app (it offers to), or run: aquactl config --load {path}")
         else:
             self.finding("no fan is set up, so the service controls none of your fans")
+
+    def pc_sensors(self, api) -> None:
+        """Which of the PC's own sensors are read (names only here; no temperature is read)."""
+        from .system import HWMON_ROOT, SystemSensors
+        self.head("PC sensors")
+        enabled = True
+        if api is not None:
+            try:
+                enabled = bool(api.get_config().get("settings", {}).get("system_sensors", True))
+            except AquaError:
+                pass
+        if not enabled:
+            self.line("turned off in Settings: none are read")
+            return
+        sensors = SystemSensors(self.hwmon_root or HWMON_ROOT, nvidia=False)
+        self.line(f"read once a second: {', '.join(sensors.chips()) or 'none'}")
+        if sensors.skipped:
+            self.line(f"left alone (network hardware): {', '.join(sensors.skipped)}")
 
     def udev(self) -> None:
         self.head("Permissions (udev rule)")

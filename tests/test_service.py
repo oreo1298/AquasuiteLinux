@@ -187,3 +187,41 @@ def test_system_sensors(tmp_path):
     stat.write_text("cpu  150 0 150 900 0 0 0 0 0 0\n")
     time.sleep(0.01)
     assert {r.id: r for r in s.poll()}["system/cpu_load"].value == pytest.approx(50.0)
+
+
+def test_system_sensors_leave_network_hardware_alone(tmp_path, monkeypatch):
+    """Reading a NIC's or PHY's temperature every second broke a user's Ethernet: never read them."""
+    import os
+
+    from aquasuitelinux.core import system
+    sys_root = tmp_path / "sys"
+    nic = sys_root / "devices" / "pci0000:00" / "0000:05:00.0"               # an Ethernet card
+    (nic / "net" / "enp5s0").mkdir(parents=True)
+    wifi = sys_root / "devices" / "pci0000:00" / "0000:06:00.0"              # a Wi-Fi card
+    (wifi / "ieee80211" / "phy0").mkdir(parents=True)
+    phy = nic / "mdio_bus" / "r8169-0-500" / "r8169-0-500:00"                # the Ethernet card's PHY
+    phy.mkdir(parents=True)
+    (sys_root / "bus" / "mdio_bus").mkdir(parents=True)
+    os.symlink(sys_root / "bus" / "mdio_bus", phy / "subsystem")
+    cpu = sys_root / "devices" / "pci0000:00" / "0000:00:18.3"
+    cpu.mkdir(parents=True)
+    root = tmp_path / "hwmon"
+    chips = [("k10temp", cpu), ("r8169_0_500:00", phy), ("whatever_nic", nic), ("mt7921_phy0", wifi),
+             ("atlantic", None), ("nvme", None)]
+    for i, (name, dev) in enumerate(chips):
+        d = root / f"hwmon{i}"
+        d.mkdir(parents=True)
+        (d / "name").write_text(name)
+        (d / "temp1_input").write_text("40000")
+        if dev is not None:
+            os.symlink(dev, d / "device")
+    reads = []
+    real_read = system._read
+    monkeypatch.setattr(system, "_read", lambda path: (reads.append(str(path)), real_read(path))[1])
+    s = system.SystemSensors(root, nvidia=False, proc_stat=tmp_path / "nostat")
+    ids = {r.id for r in s.poll()}
+    assert {i for i in ids if i != "system/cpu_load"} == {"system/k10temp/temp1", "system/nvme/temp1"}
+    assert s.chips() == ["k10temp", "nvme"]
+    assert sorted(s.skipped) == sorted(["r8169_0_500:00", "whatever_nic", "mt7921_phy0", "atlantic"])
+    touched = {p.split("/hwmon/")[1].split("/")[0] for p in reads if "/hwmon/" in p and p.endswith("_input")}
+    assert touched == {"hwmon0", "hwmon5"}                   # not a single temperature read from them

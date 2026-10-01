@@ -50,6 +50,8 @@ Arch Linux (the user runs a QUADRO).
 - Software placement neutralises the device's min/max (0 / 100 %) because scaling is done in software;
   device placement writes the output's min/max/fallback/flags.
 - Unmanaged outputs (no controller) must never be written.
+- PC sensors (`system.py`) never read network hardware — Ethernet/Wi-Fi adapters and Ethernet PHYs
+  (`is_network_hardware`): polling a NIC/PHY temperature every second broke a user's Ethernet.
 - Safety nets for untested hardware behaviour: `MAX_REWRITES` (a device that doesn't keep our settings
   → `settings_stuck`, software control), `_verify_device_outputs` (reported power far from the curve for
   `CURVE_CHECK_SECONDS` → `curve_suspect`, software control), pumps always hold minimum power.

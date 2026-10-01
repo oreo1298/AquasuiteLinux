@@ -1,12 +1,17 @@
 """Sensors of the PC itself: CPU and GPU temperatures, drives, CPU load.
 
 These can drive controllers directly or be sent to a device's software sensors, like
-aquasuite does on Windows. Sources: every hwmon chip except the Aquacomputer ones,
-``nvidia-smi`` for NVIDIA's proprietary driver, and ``/proc/stat`` for CPU load.
+aquasuite does on Windows. Sources: every hwmon chip except the Aquacomputer ones and network
+hardware, ``nvidia-smi`` for NVIDIA's proprietary driver, and ``/proc/stat`` for CPU load.
+
+Network hardware (Ethernet and Wi-Fi adapters, Ethernet PHYs) is never read: on some chips a
+temperature read goes through the registers the driver uses to run the link, and reading it every
+second broke a user's Ethernet connection while the service ran.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -22,8 +27,24 @@ HWMON_ROOT = Path("/sys/class/hwmon")
 _FRIENDLY = {
     "k10temp": "CPU", "zenpower": "CPU", "coretemp": "CPU", "cpu_thermal": "CPU", "amdgpu": "GPU",
     "radeon": "GPU", "nouveau": "GPU", "i915": "iGPU", "xe": "GPU", "nvme": "NVMe", "drivetemp": "Drive",
-    "acpitz": "ACPI", "iwlwifi_1": "Wi-Fi",
+    "acpitz": "ACPI",
 }
+# names of network drivers' sensors, for when sysfs doesn't show the device behind a chip
+_NETWORK_NAMES = re.compile(r"^(r8169|r8125|r8126|r8152|r8156|atlantic|aqc|igb|igc|ixgbe|i40e|ice|e1000|bnxt|mlx|"
+                            r"tg3|alx|atl1|be2net|iwlwifi|mt76|mt79|mt7\d|ath\d|rtw|brcmf|wil6210)|phy|mdio", re.I)
+
+
+def is_network_hardware(chip_dir: Path, name: str) -> bool:
+    """Whether a hwmon chip belongs to an Ethernet or Wi-Fi adapter or an Ethernet PHY."""
+    dev = chip_dir / "device"
+    if (dev / "net").is_dir() or (dev / "ieee80211").is_dir():
+        return True
+    try:
+        if os.path.basename(os.path.realpath(dev / "subsystem")) in ("mdio_bus", "net", "ieee80211"):
+            return True
+    except OSError:
+        pass
+    return bool(_NETWORK_NAMES.search(name))
 
 
 def _read(path: Path) -> str | None:
@@ -72,6 +93,7 @@ class SystemSensors:
         self.root = root
         self.proc_stat = proc_stat
         self._chips: list[tuple[str, str, Path, str]] = []    # (id, label, input file, unit kind)
+        self.skipped: list[str] = []                          # chips left alone (network hardware)
         self._scanned = 0.0
         self._cpu_prev: tuple[int, int] | None = None
         self._nvidia: _Nvidia | None = None
@@ -87,12 +109,16 @@ class SystemSensors:
 
     def _scan(self) -> None:
         chips: list[tuple[str, str, Path, str]] = []
+        skipped: list[str] = []
         seen: dict[str, int] = {}
         aqua = set(HWMON_NAMES)
         if self.root.is_dir():
             for d in sorted(self.root.iterdir(), key=lambda p: int(re.sub(r"\D", "", p.name) or 0)):
                 name = _read(d / "name") or d.name
                 if name in aqua:
+                    continue
+                if is_network_hardware(d, name):
+                    skipped.append(name)
                     continue
                 n = seen.get(name, 0)
                 seen[name] = n + 1
@@ -107,7 +133,14 @@ class SystemSensors:
                         nice += f" #{n + 1}"
                     chips.append((sid, nice, inp, "temperature"))
         self._chips = chips
+        self.skipped = skipped
         self._scanned = time.monotonic()
+
+    def chips(self) -> list[str]:
+        """The hwmon chips read (after a scan), e.g. ``["k10temp", "nvme", "amdgpu"]``."""
+        if not self._scanned:
+            self._scan()
+        return list(dict.fromkeys(sid.split("/")[1] for sid, *_rest in self._chips))
 
     def _cpu_load(self) -> float | None:
         text = _read(self.proc_stat)
