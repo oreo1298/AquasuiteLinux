@@ -18,18 +18,20 @@ from .widgets import scaled_font
 
 DEFAULT_RANGES = {"K": (0.0, 20.0), "°C": (20.0, 60.0), "%": (0.0, 100.0), "W": (0.0, 600.0),
                   "L/h": (0.0, 300.0), "rpm": (0.0, 3000.0)}
+ZERO_BASED = ("K", "%", "W", "L/h", "rpm")
 
 
-def default_range(unit: str, points: list[list[float]]) -> tuple[float, float]:
+def curve_range(unit: str, points: list[list[float]]) -> tuple[float, float]:
+    """The input axis: from where the unit usually starts (or below the first point) to the last point,
+    so a Delta T curve that ends at 10 K fills the graph up to 10 K."""
     lo, hi = DEFAULT_RANGES.get(unit, (0.0, 100.0))
-    if points:
-        xs = [p[0] for p in points]
-        span = max(1.0, (max(xs) - min(xs)) * 0.15)
-        lo = min(lo, math.floor(min(xs) - span))
-        hi = max(hi, math.ceil(max(xs) + span))
-    if unit in ("K", "%", "W", "L/h", "rpm"):
-        lo = max(lo, 0.0) if min((p[0] for p in points), default=0) >= 0 else lo
-    return lo, hi
+    if not points:
+        return lo, hi
+    xs = [p[0] for p in points]
+    first, last = min(xs), max(xs)
+    margin = max(1.0, (last - first) * 0.15)
+    lo = 0.0 if unit in ZERO_BASED and first >= 0 else min(lo, math.floor(first - margin))
+    return lo, (last if last > lo else lo + margin)
 
 
 class CurveEditor(QWidget):
@@ -50,6 +52,7 @@ class CurveEditor(QWidget):
         self.max_power = 100.0
         self.selected: int | None = None
         self._drag: int | None = None
+        self._drag_range: tuple[float, float] | None = None   # the axis when the drag started
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMinimumSize(360, 240)
@@ -62,7 +65,7 @@ class CurveEditor(QWidget):
     def set_curve(self, points: list[list[float]], unit: str) -> None:
         self.points = sorted([list(map(float, p)) for p in points]) or [[25.0, 20.0], [40.0, 100.0]]
         self.unit = unit
-        self.x_range = default_range(unit, self.points)
+        self.x_range = curve_range(unit, self.points)
         self.selected = None
         self.update()
 
@@ -91,8 +94,6 @@ class CurveEditor(QWidget):
             return self._insert_in_gap(max(wide)[1])
         lo, hi = self.x_range                              # no room between points: extend past the last one
         x = round(self.points[-1][0] + max(step, (hi - lo) / 20), 1)
-        if x > hi:
-            return False
         self.points.append([x, self.points[-1][1]])
         self.select(len(self.points) - 1)
         self._emit()
@@ -155,9 +156,9 @@ class CurveEditor(QWidget):
         lo, hi = self.x_range
         return QPointF(r.left() + (x - lo) / (hi - lo) * r.width(), r.bottom() - y / 100.0 * r.height())
 
-    def _from_px(self, px: QPointF) -> tuple[float, float]:
+    def _from_px(self, px: QPointF, x_range: tuple[float, float] | None = None) -> tuple[float, float]:
         r = self._plot()
-        lo, hi = self.x_range
+        lo, hi = x_range or self.x_range
         x = lo + (px.x() - r.left()) / r.width() * (hi - lo)
         y = (r.bottom() - px.y()) / r.height() * 100.0
         return x, max(0.0, min(100.0, y))
@@ -280,6 +281,7 @@ class CurveEditor(QWidget):
             return
         self.select(hit)
         self._drag = hit
+        self._drag_range = self.x_range
         self.update()
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
@@ -298,17 +300,22 @@ class CurveEditor(QWidget):
         if self._drag is None:
             self.setCursor(Qt.PointingHandCursor if self._hit(event.position()) is not None else Qt.ArrowCursor)
             return
-        x, y = self._from_px(event.position())
+        # positions come from the axis as it was when the drag started, so stretching it below can't run away
+        x, y = self._from_px(event.position(), self._drag_range)
         i = self._drag
-        lo, hi = self.x_range
+        lo, hi = self._drag_range or self.x_range
+        last = i == len(self.points) - 1
         left = self.points[i - 1][0] + self._step() if i > 0 else lo
-        right = self.points[i + 1][0] - self._step() if i < len(self.points) - 1 else hi
+        right = self.points[i + 1][0] - self._step() if not last else lo + (hi - lo) * 4
         self.points[i] = [round(max(left, min(right, x)), 1), round(y)]
+        # dragging the last point past the right edge stretches the axis with it
+        self.x_range = (lo, max(hi, self.points[i][0])) if last else (lo, hi)
         self.update()
 
     def mouseReleaseEvent(self, _event) -> None:  # noqa: N802
         if self._drag is not None:
             self._drag = None
+            self._drag_range = None
             self._emit()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
@@ -331,11 +338,12 @@ class CurveEditor(QWidget):
         x, y = self.points[i]
         lo, hi = self.x_range
         left = self.points[i - 1][0] + self._step() if i > 0 else lo
-        right = self.points[i + 1][0] - self._step() if i < len(self.points) - 1 else hi
+        right = self.points[i + 1][0] - self._step() if i < len(self.points) - 1 else lo + (hi - lo) * 4
         self.points[i] = [round(max(left, min(right, x + dx)), 1), max(0.0, min(100.0, y + dy))]
         self._emit()
 
     def _emit(self) -> None:
+        self.x_range = curve_range(self.unit, self.points)    # the axis follows the last point
         self.update()
         self.changed.emit([list(p) for p in self.points])
 

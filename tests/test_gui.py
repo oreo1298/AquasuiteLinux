@@ -204,6 +204,44 @@ def test_curve_editor_interaction(qapp):
     assert len(ed.points) == 2
 
 
+def test_curve_axis_ends_at_the_last_point(qapp):
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QKeyEvent, QMouseEvent
+
+    from aquasuitelinux.core.config import DELTA_T_CURVE
+    from aquasuitelinux.gui.curve_editor import CurveEditor, curve_range
+    assert curve_range("K", DELTA_T_CURVE) == (0.0, 10.0)                      # a Delta T curve up to 10 K
+    assert curve_range("°C", [[25, 20], [40, 100]]) == (20.0, 40.0)
+    assert curve_range("°C", [[10, 20], [15, 100]]) == (9.0, 15.0)              # below the usual start
+    ed = CurveEditor()
+    ed.resize(600, 400)
+    ed.set_curve(DELTA_T_CURVE, "K")
+    assert ed.x_range == (0.0, 10.0)
+
+    def mouse(kind, pos):
+        return QMouseEvent(kind, pos, pos, Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    # drag the last point past the right edge: the axis stretches with it, then ends at the new last point
+    start = ed._to_px(10, 100)
+    ed.mousePressEvent(mouse(QMouseEvent.MouseButtonPress, start))
+    beyond = QPointF(start.x() + ed._plot().width() * 0.2, start.y())
+    ed.mouseMoveEvent(mouse(QMouseEvent.MouseMove, beyond))
+    ed.mouseMoveEvent(mouse(QMouseEvent.MouseMove, beyond))                    # same spot: no runaway
+    assert abs(ed.points[-1][0] - 12.0) < 0.2 and ed.x_range[1] == ed.points[-1][0]
+    ed.mouseReleaseEvent(mouse(QMouseEvent.MouseButtonRelease, beyond))
+    assert ed.x_range == (0.0, ed.points[-1][0])
+    # back to the left: the axis shrinks to it on release
+    ed.mousePressEvent(mouse(QMouseEvent.MouseButtonPress, ed._to_px(*ed.points[-1])))
+    ed.mouseMoveEvent(mouse(QMouseEvent.MouseMove, ed._to_px(9, 100)))
+    ed.mouseReleaseEvent(mouse(QMouseEvent.MouseButtonRelease, ed._to_px(9, 100)))
+    assert abs(ed.x_range[1] - 9) < 0.2
+    # the arrow keys can move the last point past the end too
+    ed.select(len(ed.points) - 1)
+    before = ed.points[-1][0]
+    for _ in range(5):
+        ed.keyPressEvent(QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Right, Qt.NoModifier))
+    assert ed.points[-1][0] > before and ed.x_range[1] == ed.points[-1][0]
+
+
 def test_curve_points_can_be_added_without_changing_the_shape(qapp):
     from aquasuitelinux.core.config import DELTA_T_CURVE
     from aquasuitelinux.core.controllers import interpolate
